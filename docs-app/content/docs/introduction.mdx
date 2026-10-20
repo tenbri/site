@@ -1,12 +1,15 @@
 ---
 title: Introduction
-description: What Tenbri is and the problem it solves.
+description: What an Agent Decision Record is, why Tenbri is one, and the problem it solves.
 ---
 
-Tenbri is an open-source, tamper-evident record of what AI agents decided: who acted, under which
-rule and policy version, from which inputs, and who approved. It is written in Rust, stores plain
-files on a local disk or an object store, and verifies offline against a trust root the verifier
-controls.
+An **Agent Decision Record** is a signed, append-only record of every decision an AI agent makes:
+who acted, under which rule and inputs, who approved, and what happened, verifiable offline by
+anyone. See [What is an Agent Decision Record](/docs/concepts/agent-decision-record/).
+
+Tenbri is the open-source Agent Decision Record, an audit trail for AI agents. It is written in
+Rust, stores plain files on a local disk or an object store, and verifies offline against a trust
+root the verifier controls.
 
 It works on its own, with any agent framework, from Rust, Python, Node, the browser (WASM), the
 `tenbri` CLI or the `tenbrid` REST and gRPC API.

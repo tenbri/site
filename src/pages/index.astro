@@ -13,9 +13,9 @@ import langchainIcon from '@lobehub/icons-static-svg/icons/langchain-color.svg?r
 import hfIcon from '@lobehub/icons-static-svg/icons/huggingface-color.svg?raw';
 import { siPython, siTypescript } from 'simple-icons';
 
-const title = 'Tenbri: audit trail for AI agents';
+const title = 'Tenbri: the open-source Agent Decision Record';
 const description =
-	'Open-source, tamper-evident record of what AI agents decided: hash-chained, signed and verifiable offline, on storage you control.';
+	'An Agent Decision Record is a signed, append-only record of every decision an AI agent makes, verifiable offline by anyone. Tenbri is the open-source one: an audit trail for AI agents, hash-chained and signed, on storage you control.';
 
 const installs = [
 	{ id: 'pip', cmd: 'pip install --pre tenbri' },
@@ -192,6 +192,15 @@ const session = [
 // and ops agents; the overview screenshot is its poster.
 const uiPoster = await getImage({ src: uiOverview, width: 1440, format: 'webp' });
 
+// Logs, traces, decision records: what each one is for.
+const kinds = ['Logs', 'Traces', 'Decision records'];
+const compare = [
+	{ q: 'What it answers', a: ['What a service printed', 'How the agent ran: steps, latency, tokens, cost', 'What the agent decided, and on whose authority'] },
+	{ q: 'Who it serves', a: ['Operators', 'Engineers improving the agent', 'Auditors, customers, regulators and incident review'] },
+	{ q: 'Can it be altered?', a: ['Yes: edited, rotated, deleted', 'Yes: sampled, rewritten, expired', 'No: any change fails verification'] },
+	{ q: 'Can a third party verify it?', a: ['No, they must trust you', 'No, they need your account', 'Yes, offline, with one fingerprint'] },
+];
+
 const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', 'SOC 2', 'ISO/IEC 27001', 'ISO/IEC 42001', 'NIST AI RMF'];
 ---
 
@@ -204,16 +213,18 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	<main>
 		<section class="hero">
 			<div class="wrap hero-inner">
+				<p class="eyebrow">The Agent Decision Record</p>
 				<h1 class="lockup">
 					<Image src={mascot} alt="" width={160} height={160} densities={[1, 2, 3]} loading="eager" />
 					<span>Tenbri</span>
-					<span class="sr">: audit trail for AI agents</span>
+					<span class="sr">: the open-source Agent Decision Record</span>
 				</h1>
 				<p class="tagline">Proof of what your agents decided</p>
 				<p class="lede">
-					A tamper-evident audit trail for AI agents. Every tool call is signed and chained to the one
-					before, so anyone can verify offline who acted, under which policy, from which inputs, and who
-					approved. One line for Claude, OpenAI and LangGraph agents; plain files on storage you control.
+					An Agent Decision Record is a signed, append-only record of every decision an AI agent makes:
+					who acted, under which rule and inputs, who approved, and what happened, verifiable offline by
+					anyone. Tenbri is the open-source one. One line for Claude, OpenAI and LangGraph agents; plain
+					files on storage you control.
 				</p>
 
 				<div class="installer">
@@ -333,7 +344,28 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 			</div>
 		</section>
 
-		<section class="band" aria-labelledby="arch-title">
+		<section class="band" aria-labelledby="kinds-title">
+			<div class="wrap section-head center">
+				<p class="eyebrow">A new kind of record</p>
+				<h2 id="kinds-title">Logs, traces, decision records</h2>
+				<p class="sub">Observability tools such as Langfuse and MLflow answer how an agent ran. A decision record proves what it decided and on whose authority. Keep both: Tenbri links each decision to its OpenTelemetry trace.</p>
+			</div>
+			<div class="wrap compare">
+				<table>
+					<thead><tr><th scope="col"><span class="sr">Question</span></th>{kinds.map((k) => <th scope="col">{k}</th>)}</tr></thead>
+					<tbody>
+						{compare.map((c) => (
+							<tr><th scope="row">{c.q}</th>{c.a.map((a) => <td>{a}</td>)}</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+			<div class="wrap center-link">
+				<a class="more" href="/docs/why-not-logs/">Why not just logs? <span aria-hidden="true">→</span></a>
+			</div>
+		</section>
+
+		<section class="band alt" aria-labelledby="arch-title">
 			<div class="wrap section-head center">
 				<p class="eyebrow">Architecture</p>
 				<h2 id="arch-title">Write, sign and chain, store, prove</h2>
@@ -347,7 +379,7 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 			</div>
 		</section>
 
-		<section class="band alt">
+		<section class="band">
 			<div class="wrap regs">
 				<div>
 					<p class="eyebrow">Records these frameworks ask for</p>
@@ -591,6 +623,16 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	.story-stats code { font: 0.85em var(--font-mono); color: var(--ink); }
 
 	.center-link { text-align: center; }
+
+	/* Logs, traces, decision records */
+	.compare { max-width: 64rem; width: 100%; overflow-x: auto; }
+	.compare table { width: 100%; min-width: 40rem; border-collapse: collapse; font-size: 1rem; }
+	.compare th, .compare td { padding: 0.95rem 1rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--rule); }
+	.compare thead th { font: 500 0.75rem/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+	.compare thead th:last-child { color: var(--stamp); }
+	.compare tbody th { font-weight: 600; color: var(--ink); width: 22%; }
+	.compare td { color: var(--ink-2); }
+	.compare td:last-child { color: var(--ink); background: color-mix(in srgb, var(--stamp) 8%, transparent); }
 	.full { width: 100%; }
 
 	/* Compliance */

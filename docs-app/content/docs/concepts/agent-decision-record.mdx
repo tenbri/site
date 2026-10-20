@@ -1,0 +1,36 @@
+---
+title: What is an Agent Decision Record
+description: The category Tenbri belongs to, the properties a record must have to count as one, and the Tenbri feature behind each.
+---
+
+An **Agent Decision Record** is a signed, append-only record of every decision an AI agent makes:
+who acted, under which rule and inputs, who approved, and what happened, verifiable offline by
+anyone. Tenbri is an open-source implementation.
+
+It is not a log or a trace. Logs and observability tools such as Langfuse and MLflow show how an
+agent ran, for the people who operate it. A decision record proves what the agent decided and on
+whose authority, to people who do not have to trust the operator. See
+[Why not just logs?](/docs/why-not-logs/).
+
+## The minimum properties
+
+A record counts as an Agent Decision Record when it has all of these:
+
+| Property | What it means | In Tenbri |
+|---|---|---|
+| Intent before the action | The decision is written down before the side effect runs, so a crash cannot hide it | A `decision` entry with phase `intent`, written by `@tenbri.decision`, `tenbri append` or `POST /v1/streams/{stream}/intents` before the call |
+| Outcome after | What happened is recorded and tied to its intent | A `decision` entry with phase `outcome` and `status` (`ok`, `refused`, `error`, `unknown`), linked by `intent` |
+| Principal | The specific agent, person or service that acted, not a shared account | `principal` `{kind, id}`, optionally with its own attestation signature. See [Keys](/docs/concepts/keys/) |
+| Rule and input versions | Which rule allowed or refused it, and exactly what the agent saw | `rule` `{ref, version, result}` and `inputs` pinned by reference, version and keyed digest; `tenbri query --rule` |
+| Approval | A person's sign-off is its own signed fact, not a chat message | An `approval` entry, referenced from the decision by `approval.entry`; [schemas](/docs/reference/schemas/) can require one |
+| Tamper evidence | Any edit, deletion, reordering or fork is detectable | Canonical bytes, a hash chain, Ed25519 signatures, signed HEAD and checkpoints. See [Integrity](/docs/concepts/integrity/) |
+| Offline verification | Anyone can check it with no access to your systems | `tenbri verify` against a pinned fingerprint, and receipts that prove single entries |
+| Erasure without breaking the chain | Personal data can be deleted while the record still verifies | Only hashes in the chain, encrypted bodies and per-subject keys; `tenbri erase`. See [Privacy](/docs/concepts/privacy/) |
+
+A system missing any one of these is still useful, but it cannot answer the question a dispute,
+incident or audit asks: what did the agent decide, and on whose authority?
+
+## Next
+
+- [Streams and entries](/docs/concepts/streams-and-entries/): what each entry holds.
+- [Quickstart](/docs/getting-started/quickstart/): record your first decision.

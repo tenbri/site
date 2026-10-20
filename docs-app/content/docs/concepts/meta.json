@@ -1,5 +1,6 @@
 {
   "pages": [
+    "agent-decision-record",
     "architecture",
     "streams-and-entries",
     "integrity",
