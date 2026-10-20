@@ -1,10 +1,7 @@
 ---
-import { Image } from 'astro:assets';
+import { Image, getImage } from 'astro:assets';
 import mascot from '../assets/mascot.webp';
 import uiOverview from '../assets/ui/overview.webp';
-import uiDecisions from '../assets/ui/decisions.webp';
-import uiTrace from '../assets/ui/trace.webp';
-import uiIntegrity from '../assets/ui/integrity.webp';
 import Site from '../layouts/Site.astro';
 import CodeWindow from '../components/CodeWindow.astro';
 import TerminalPlayer from '../components/TerminalPlayer.astro';
@@ -191,14 +188,9 @@ const session = [
 	{ chapter: 'Caught', note: 'the first changed entry fails verification', cmd: 'tenbri verify', out: 'broken at seq 5: bad_signature: the signature does not verify\n4 entries verified before it, stream tnb1:986d8e32…3588 (the pin recorded in ~/demo/keys/pins)' },
 ];
 
-// Tenbri UI showcase: screenshots of tenbrid's UI on a seeded week of support, billing, triage
-// and ops agents.
-const screens = [
-	{ id: 'overview', label: 'Overview', img: uiOverview, alt: 'Tenbri UI overview: decisions by outcome status over a week, error and refusal rates, latency p50 and p95, top actions and principals', caption: 'Volume by outcome, error and refusal rates, intent to outcome latency, and which agents and actions dominate.' },
-	{ id: 'decisions', label: 'Decisions', img: uiDecisions, alt: 'Tenbri UI decisions table: time, action, principal, target, status, latency, rule and verification for each decision', caption: 'Every intent joined with its outcome. Filter by status, action or principal, search targets and subjects, pick columns.' },
-	{ id: 'trace', label: 'Trace', img: uiTrace, alt: 'Tenbri UI trace view: a timeline of three agent decisions under one OpenTelemetry trace, with the selected entry\'s details', caption: 'One OpenTelemetry trace as a timeline: each intent runs to its outcome, colored by status, with the signed entry beside it.' },
-	{ id: 'integrity', label: 'Integrity', img: uiIntegrity, alt: 'Tenbri UI integrity page: the stream verifies against its pinned key, with the head, checkpoint and key events', caption: 'Whether the whole stream verifies against its pinned key, plus the head, the latest checkpoint and every key event.' },
-];
+// Tenbri UI showcase: a recorded tour of tenbrid's UI on a seeded week of support, billing, triage
+// and ops agents; the overview screenshot is its poster.
+const uiPoster = await getImage({ src: uiOverview, width: 1440, format: 'webp' });
 
 const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', 'SOC 2', 'ISO/IEC 27001', 'ISO/IEC 42001', 'NIST AI RMF'];
 ---
@@ -277,20 +269,11 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 				<div class="uiframe">
 					<div class="uibar">
 						<span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
-						<div class="uitabs" role="tablist" aria-label="Tenbri UI pages">
-							{screens.map((s, i) => (
-								<button type="button" role="tab" class="uitab" id={`uitab-${s.id}`} aria-controls={`uipanel-${s.id}`} aria-selected={i === 0 ? 'true' : 'false'}>{s.label}</button>
-							))}
-						</div>
 						<span class="uiurl">127.0.0.1:7070</span>
 					</div>
-					{screens.map((s, i) => (
-						<div class="uipanel" role="tabpanel" id={`uipanel-${s.id}`} aria-labelledby={`uitab-${s.id}`} hidden={i !== 0}>
-							<Image src={s.img} alt={s.alt} widths={[960, 1440, 1920]} sizes="(max-width: 1180px) 100vw, 72rem" loading={i === 0 ? 'eager' : 'lazy'} />
-						</div>
-					))}
+					<video class="uivideo" src="/media/ui-tour.mp4" poster={uiPoster.src} width="1440" height="900" autoplay muted loop playsinline preload="metadata" aria-label="A tour of Tenbri UI: the overview of a stream, decisions filtered to errors, one decision's timeline and signed chain, its OpenTelemetry trace, and the integrity check"></video>
 				</div>
-				{screens.map((s, i) => <p class="uicap" data-for={s.id} hidden={i !== 0}>{s.caption}</p>)}
+				<p class="uicap">Overview, then the errors, one decision's timeline and signed chain, its whole trace, and the integrity check.</p>
 				<div class="center-link">
 					<a class="more" href="/docs/getting-started/ui/">Run Tenbri UI <span aria-hidden="true">→</span></a>
 				</div>
@@ -388,15 +371,11 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	</main>
 
 	<script>
-		// Tenbri UI tabs
-		const uitabs = [...document.querySelectorAll<HTMLButtonElement>('.uitab')];
-		for (const tab of uitabs) {
-			tab.addEventListener('click', () => {
-				const id = tab.id.replace('uitab-', '');
-				for (const t of uitabs) t.setAttribute('aria-selected', String(t === tab));
-				for (const p of document.querySelectorAll<HTMLElement>('.uipanel')) p.hidden = p.id !== `uipanel-${id}`;
-				for (const c of document.querySelectorAll<HTMLElement>('.uicap')) c.hidden = c.dataset.for !== id;
-			});
+		// The UI tour stays on its first frame for visitors who ask for less motion.
+		const tour = document.querySelector<HTMLVideoElement>('.uivideo');
+		if (tour && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+			tour.removeAttribute('autoplay');
+			tour.pause();
 		}
 
 		// Install tabs + copy
@@ -544,15 +523,8 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	.uibar { display: flex; align-items: center; gap: 1rem; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--term-chip); }
 	.uibar .lights { display: flex; gap: 6px; }
 	.uibar .lights i { width: 10px; height: 10px; border-radius: 50%; background: var(--term-chip); }
-	.uitabs { display: flex; gap: 0.25rem; overflow-x: auto; }
-	.uitab {
-		font: 500 0.85rem/1 var(--font-body); color: var(--term-dim); background: none; border: 0; border-radius: 8px;
-		padding: 0.5rem 0.8rem; cursor: pointer; white-space: nowrap;
-	}
-	.uitab:hover { color: var(--term-fg); }
-	.uitab[aria-selected='true'] { color: var(--term-fg); background: var(--term-chip); }
 	.uiurl { margin-left: auto; font: 0.75rem var(--font-mono); color: var(--term-dim); }
-	.uipanel img { display: block; width: 100%; height: auto; }
+	.uivideo { display: block; width: 100%; height: auto; background: var(--term-bg); }
 	.uicap { color: var(--ink-2); text-align: center; max-width: 40rem; margin: 0; }
 	@media (max-width: 640px) { .uiurl { display: none; } }
 	.fw { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem; }
