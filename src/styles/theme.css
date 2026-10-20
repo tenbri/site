@@ -1,60 +1,46 @@
-/* Tenbri tokens, sampled from the pangolin mascot. Starlight reads the --sl-* variables. */
-:root {
-	--tb-orange: #e8641c;
-	--tb-amber: #f6a623;
-	--tb-cream: #fdf1dc;
-	--tb-tan: #d9b079;
-	--tb-bark: #7a4a2a;
-	--tb-ink: #2b1a0f;
-	--tb-lens: #8fd3f5;
+/* Starlight (docs + blog) mapped onto the Tenbri tokens. Starlight's bare :root is its dark theme. */
+@import './tokens.css';
 
-	--sl-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
-	--tb-font-display: 'Fredoka Variable', var(--sl-font);
-}
-
-/* Dark (Starlight default) */
 :root {
+	--sl-font: var(--font-body);
+	--sl-font-mono: var(--font-mono);
 	--sl-color-accent-low: #3d1e0b;
-	--sl-color-accent: #f08a3e;
+	--sl-color-accent: #ff7a3d;
 	--sl-color-accent-high: #ffd9b8;
-	--sl-color-white: #fff8ee;
-	--sl-color-gray-1: #f3e4cf;
-	--sl-color-gray-2: #d6c2a8;
-	--sl-color-gray-3: #a58d72;
-	--sl-color-gray-4: #6b5440;
-	--sl-color-gray-5: #47352a;
-	--sl-color-gray-6: #2e221a;
-	--sl-color-black: #1c140f;
+	--sl-color-white: #f7eada;
+	--sl-color-gray-1: #eadbc8;
+	--sl-color-gray-2: #cdb8a0;
+	--sl-color-gray-3: #9c856d;
+	--sl-color-gray-4: #64503e;
+	--sl-color-gray-5: #3a2c21;
+	--sl-color-gray-6: #231a12;
+	--sl-color-black: #16100c;
 }
 
 :root[data-theme='light'] {
 	--sl-color-accent-low: #fde3cc;
-	--sl-color-accent: #c24f0e;
-	--sl-color-accent-high: #6b2a05;
-	--sl-color-white: var(--tb-ink);
-	--sl-color-gray-1: #3d2a1c;
-	--sl-color-gray-2: #5a4230;
-	--sl-color-gray-3: #806650;
-	--sl-color-gray-4: #b39c84;
-	--sl-color-gray-5: #e3d3bd;
-	--sl-color-gray-6: #f7ecdc;
-	--sl-color-gray-7: #fcf6ec;
-	--sl-color-black: #fffbf5;
+	--sl-color-accent: #b9400f;
+	--sl-color-accent-high: #5e2304;
+	--sl-color-white: #24170f;
+	--sl-color-gray-1: #3a2a1e;
+	--sl-color-gray-2: #574131;
+	--sl-color-gray-3: #7d6553;
+	--sl-color-gray-4: #b09a85;
+	--sl-color-gray-5: #ead9c3;
+	--sl-color-gray-6: #fff1de;
+	--sl-color-gray-7: #fff7ec;
+	--sl-color-black: #fffcf7;
 }
 
-h1, h2, h3, .site-title, .hero h1 {
-	font-family: var(--tb-font-display);
-	letter-spacing: -0.01em;
+h1, h2, h3, h4, .site-title {
+	font-family: var(--font-display);
+	letter-spacing: -0.02em;
 }
+.site-title { font-weight: 800; }
+.sl-markdown-content h2 { font-weight: 700; }
 
-/* Sticker look, like the mascot's thick outline */
-.card, .sl-link-card {
-	border-radius: 1rem;
-	border-width: 2px;
-}
-.sl-markdown-content :is(img, pre) {
-	border-radius: 0.75rem;
-}
+.sl-markdown-content :is(img, pre, .expressive-code) { border-radius: 0.6rem; }
+.sl-markdown-content table { font-size: var(--sl-text-sm); }
 
 /* Excalidraw drawings: name files *.excalidraw.svg, export with a transparent background.
    In dark mode invert them like excalidraw.com does, keeping hues. */

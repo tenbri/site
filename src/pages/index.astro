@@ -1,0 +1,559 @@
+---
+import { Image } from 'astro:assets';
+import mascot from '../assets/mascot.webp';
+import '../styles/tokens.css';
+
+const title = 'Tenbri — audit trail for AI agents';
+const description =
+	'Open-source, tamper-evident record of what AI agents decided: hash-chained, signed and verifiable offline, on storage you control.';
+
+const installs = [
+	{ id: 'cli', cmd: 'cargo install tenbri-cli --version 0.1.0-alpha.2' },
+	{ id: 'rust', cmd: 'cargo add tenbri@0.1.0-alpha.2' },
+	{ id: 'python', cmd: 'pip install --pre tenbri' },
+	{ id: 'node', cmd: 'npm install tenbri@next' },
+];
+
+const compare = [
+	['Integrity', 'Editable, rotated, deleted', 'Hash-chained and signed. Any change fails verification.'],
+	['Who acted', 'A shared service account', 'The specific agent, person or service, with its own key'],
+	['What it saw', 'Free text, if anything', 'Inputs pinned by reference, version and content hash'],
+	['Why it was allowed', 'Rarely recorded', 'The rule or grant that allowed or refused it'],
+	['Human oversight', 'A Slack thread, if anything', 'The approval, as its own signed entry'],
+	['Sharing with an auditor', 'Access to your systems', 'A receipt that verifies on its own, offline'],
+	['Personal data', 'Copied into log lines', 'Only hashes in the chain; bodies encrypted and erasable'],
+];
+
+const cases = [
+	{
+		q: 'A customer disputes a refusal.',
+		a: 'Show the exact policy version, contract clause and grant behind every reply.',
+		cmd: 'tenbri query ./support --action reply_ticket',
+	},
+	{
+		q: 'A policy changes.',
+		a: 'List every decision made under the old wording, so someone can review them.',
+		cmd: 'tenbri query ./support --input policy:refund@14',
+	},
+	{
+		q: 'Someone edits history.',
+		a: 'Verification fails on the first changed byte, and a checkpoint catches truncation.',
+		cmd: 'tenbri verify ./support --key sha256:9c1e…',
+	},
+	{
+		q: 'An incident is unfolding.',
+		a: 'Follow decisions as they are written, each linked to the trace that produced it.',
+		cmd: 'tenbri tail ./support -n 20',
+	},
+];
+
+const regs = [
+	['EU AI Act Art. 12', 'https://artificialintelligenceact.eu/article/12/'],
+	['EU AI Act Art. 14', 'https://artificialintelligenceact.eu/article/14/'],
+	['GDPR Art. 22', 'https://gdpr-info.eu/art-22-gdpr/'],
+	['DORA', 'https://eur-lex.europa.eu/eli/reg/2022/2554/oj'],
+	['NIS2', 'https://eur-lex.europa.eu/eli/dir/2022/2555/oj'],
+	['SOC 2', 'https://www.aicpa-cima.com/topic/audit-assurance/audit-and-assurance-greater-than-soc-2'],
+	['ISO/IEC 27001', 'https://www.iso.org/standard/27001'],
+	['ISO/IEC 42001', 'https://www.iso.org/standard/42001'],
+	['NIST AI RMF', 'https://www.nist.gov/itl/ai-risk-management-framework'],
+];
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<title>{title}</title>
+		<meta name="description" content={description} />
+		<meta property="og:title" content={title} />
+		<meta property="og:description" content={description} />
+		<link rel="icon" href="/favicon.png" />
+		<link rel="alternate" type="application/rss+xml" title="Tenbri blog" href="/blog/rss.xml" />
+		<script is:inline>
+			// Share the theme the docs remember (Starlight stores it under this key).
+			try {
+				const t = localStorage.getItem('starlight-theme');
+				if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+			} catch {}
+		</script>
+	</head>
+	<body>
+		<header class="nav">
+			<div class="wrap nav-row">
+				<a class="brand" href="/">
+					<Image src={mascot} alt="" width={32} height={32} />
+					<span>Tenbri</span>
+				</a>
+				<nav aria-label="Main">
+					<a href="/docs/introduction/">Docs</a>
+					<a href="/blog/">Blog</a>
+					<a class="wide" href="https://github.com/tenbri/tenbri/releases">Releases</a>
+					<a href="https://github.com/tenbri/tenbri">GitHub</a>
+				</nav>
+			</div>
+		</header>
+
+		<main>
+			<section class="hero wrap">
+				<div class="lockup">
+					<Image src={mascot} alt="" width={112} height={112} loading="eager" />
+					<span>Tenbri</span>
+				</div>
+				<h1>Proof of what your agents decided.</h1>
+				<p class="lede">
+					An open-source audit trail for AI agents. Every decision is hash-chained, signed and
+					verifiable offline: who acted, under which policy version, from which inputs, and who
+					approved. Plain files, on storage you control.
+				</p>
+
+				<div class="install">
+					<div class="tabs" role="tablist" aria-label="Install with">
+						{installs.map((t, i) => (
+							<button type="button" role="tab" id={`tab-${t.id}`} aria-selected={i === 0 ? 'true' : 'false'} data-cmd={t.cmd}>
+								{t.id}
+							</button>
+						))}
+						<button type="button" class="copy" id="copy">copy</button>
+					</div>
+					<code id="install-cmd">{installs[0].cmd}</code>
+				</div>
+
+				<div class="ctas">
+					<a class="btn primary" href="/docs/introduction/">Get started</a>
+					<a class="btn" href="https://github.com/tenbri/tenbri">Star on GitHub</a>
+					<a class="btn" href="https://github.com/tenbri/tenbri/tree/main/spec">Read the spec</a>
+				</div>
+
+				<div class="desk" aria-label="Example Tenbri entry">
+					<div class="receipt ghost g2" aria-hidden="true"></div>
+					<div class="receipt ghost g1" aria-hidden="true"></div>
+					<article class="receipt">
+						<header class="r-head">
+							<span>Decision · intent</span>
+							<span>seq 3</span>
+						</header>
+						<dl>
+							<dt>agent</dt><dd>support-assistant</dd>
+							<dt>action</dt><dd>reply_ticket → zendesk:ticket/4821</dd>
+							<dt>inputs</dt><dd>policy:refund <b>@14</b><br />contract:acme-sante <b>@3</b></dd>
+							<dt>rule</dt><dd>grants:support-assistant @7 · <b class="allow">allow</b></dd>
+							<dt>trace</dt><dd>4bf92f35…0e4736</dd>
+							<dt>at</dt><dd>2026-10-14 14:02:13Z</dd>
+						</dl>
+						<footer class="r-foot">
+							<div><span>prev</span> sha256:3b75c4e7…f72f0</div>
+							<div><span>sig</span> ed25519:85a8f11d…8cd001</div>
+						</footer>
+						<div class="stamp" aria-label="Verified">
+							<span class="stamp-top">tenbri</span>
+							<span class="stamp-main">Verified</span>
+							<span class="stamp-sub">chain · sig · key</span>
+						</div>
+					</article>
+					<Image class="pangolin" src={mascot} alt="Tenbri's mascot, a pangolin detective inspecting the entry with a magnifying glass" width={220} height={220} />
+				</div>
+			</section>
+
+			<section class="wrap block">
+				<div class="block-head">
+					<p class="eyebrow">Why not just logs?</p>
+					<h2>Logs tell operators what happened. Tenbri proves it to anyone.</h2>
+					<p class="sub">Including someone who doesn't trust the operator.</p>
+				</div>
+				<div class="ledger-scroll">
+					<table class="ledger">
+						<thead>
+							<tr><th scope="col"><span class="sr">Property</span></th><th scope="col">Application logs</th><th scope="col">Tenbri</th></tr>
+						</thead>
+						<tbody>
+							{compare.map(([k, logs, tb]) => (
+								<tr><th scope="row">{k}</th><td class="logs">{logs}</td><td class="tb">{tb}</td></tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+				<p class="note">Tenbri doesn't replace logs or tracing. It records decisions and links each one to the OpenTelemetry trace that produced it.</p>
+			</section>
+
+			<section class="wrap block">
+				<div class="block-head">
+					<p class="eyebrow">Three commands</p>
+					<h2>Write it, sign it, check it.</h2>
+				</div>
+				<div class="steps">
+					<ol>
+						<li><b>Create a stream.</b> A directory, or an <code>s3://</code> or <code>r2://</code> prefix. Tenbri prints the key fingerprint to pin.</li>
+						<li><b>Append decisions.</b> One JSON entry on stdin, from your agent, the SDK or <code>tenbrid</code>. Each entry links to the one before.</li>
+						<li><b>Verify anywhere.</b> Canonical bytes, chain, signatures and keys, checked offline against the fingerprint you pinned.</li>
+					</ol>
+					<pre class="term" aria-label="Terminal example"><span class="c"># 1  create a stream</span>
+<span class="p">$</span> tenbri init ./support
+created stream tnb1:1702…b7d8 at ./support
+stream key fingerprint (pin it): sha256:9c1e…
+
+<span class="c"># 2  append a decision</span>
+<span class="p">$</span> agent-run | tenbri append ./support
+{'{"seq":3,"kind":"decision","phase":"intent",…}'}
+
+<span class="c"># 3  verify it, anywhere</span>
+<span class="p">$</span> tenbri verify ./support --key sha256:9c1e…
+<span class="ok">verified 4 entries</span>, stream tnb1:1702…b7d8,
+pinned to sha256:9c1e…</pre>
+				</div>
+			</section>
+
+			<section class="wrap block">
+				<div class="block-head">
+					<p class="eyebrow">When it matters</p>
+					<h2>Answers for the day something goes wrong.</h2>
+				</div>
+				<div class="cases">
+					{cases.map((c) => (
+						<div class="case">
+							<h3>{c.q}</h3>
+							<p>{c.a}</p>
+							<code>{c.cmd}</code>
+						</div>
+					))}
+				</div>
+			</section>
+
+			<section class="wrap block regs">
+				<p class="eyebrow">Records the rules ask for</p>
+				<ul>
+					{regs.map(([name, href]) => <li><a href={href}>{name}</a></li>)}
+				</ul>
+				<p class="note">Tenbri gives you the records these ask for. It does not make a system compliant on its own.</p>
+			</section>
+
+			<section class="closing">
+				<div class="wrap closing-row">
+					<Image src={mascot} alt="" width={120} height={120} />
+					<div>
+						<p class="eyebrow">Pre-release · 0.1.0-alpha.2</p>
+						<h2>Early, open and built in public.</h2>
+						<p>The format is provisional until its external review ends. Follow along, read the spec, or tell us what your agents need to prove.</p>
+						<div class="ctas">
+							<a class="btn primary" href="https://github.com/tenbri/tenbri">Star on GitHub</a>
+							<a class="btn" href="/blog/">Read the blog</a>
+						</div>
+					</div>
+				</div>
+			</section>
+		</main>
+
+		<footer class="foot">
+			<div class="wrap foot-row">
+				<span>Tenbri · Apache-2.0</span>
+				<nav aria-label="Footer">
+					<a href="/docs/introduction/">Docs</a>
+					<a href="/blog/">Blog</a>
+					<a href="/blog/rss.xml">RSS</a>
+					<a href="https://github.com/tenbri/tenbri/tree/main/spec">Spec</a>
+					<a href="https://github.com/tenbri/tenbri/blob/main/SECURITY.md">Security</a>
+				</nav>
+			</div>
+		</footer>
+
+		<script>
+			const cmd = document.getElementById('install-cmd')!;
+			const copy = document.getElementById('copy')!;
+			const tabs = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+			for (const tab of tabs) {
+				tab.addEventListener('click', () => {
+					for (const t of tabs) t.setAttribute('aria-selected', String(t === tab));
+					cmd.textContent = tab.dataset.cmd ?? '';
+				});
+			}
+			copy.addEventListener('click', async () => {
+				try {
+					await navigator.clipboard.writeText(cmd.textContent ?? '');
+					copy.textContent = 'copied';
+				} catch {
+					getSelection()?.selectAllChildren(cmd);
+				}
+				setTimeout(() => (copy.textContent = 'copy'), 1500);
+			});
+		</script>
+	</body>
+</html>
+
+<style>
+	:global(*, *::before, *::after) { box-sizing: border-box; }
+	:global(html) { -webkit-text-size-adjust: 100%; }
+	:global(body) {
+		margin: 0;
+		background: var(--paper);
+		color: var(--ink);
+		font: 400 1.0625rem/1.6 var(--font-body);
+	}
+	:global(main) { overflow-x: clip; }
+	:global(a) { color: inherit; }
+	:global(:focus-visible) { outline: 2px solid var(--lens); outline-offset: 3px; border-radius: 4px; }
+	.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+	.wrap {
+		max-width: 70rem;
+		margin-inline: auto;
+		padding-left: max(20px, env(safe-area-inset-left, 0px));
+		padding-right: max(20px, env(safe-area-inset-right, 0px));
+	}
+
+	h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+	h2 { font-size: clamp(1.8rem, 3.4vw, 2.6rem); line-height: 1.05; letter-spacing: -0.025em; font-weight: 750; }
+	h3 { font-size: 1.2rem; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em; }
+	p { margin: 0; }
+	code, pre { font-family: var(--font-mono); }
+
+	.eyebrow {
+		font: 500 0.78rem/1 var(--font-mono);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--stamp);
+	}
+
+	/* Nav */
+	.nav {
+		position: sticky;
+		top: env(safe-area-inset-top, 0px);
+		z-index: 10;
+		background: color-mix(in srgb, var(--paper) 88%, transparent);
+		backdrop-filter: blur(10px);
+		border-bottom: 1px solid var(--rule);
+	}
+	.nav-row { display: flex; align-items: center; justify-content: space-between; height: 3.5rem; }
+	.brand { display: flex; align-items: center; gap: 0.5rem; text-decoration: none; font: 800 1.25rem/1 var(--font-display); letter-spacing: -0.03em; }
+	.brand :global(img) { width: 32px; height: 32px; }
+	.nav nav { display: flex; gap: 1.5rem; font-weight: 500; font-size: 0.95rem; }
+	.nav nav a { text-decoration: none; color: var(--ink-2); }
+	.nav nav a:hover { color: var(--ink); }
+
+	/* Hero: centred lockup, tagline, install, then the product as the picture */
+	.hero {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		gap: 1.5rem;
+		padding-block: clamp(3rem, 7vw, 5.5rem) clamp(3rem, 6vw, 4.5rem);
+	}
+	.lockup { display: flex; align-items: center; gap: clamp(0.5rem, 1.5vw, 1rem); }
+	.lockup :global(img) { width: clamp(72px, 10vw, 112px); height: auto; }
+	.lockup span {
+		font: 800 clamp(3.4rem, 9vw, 6.5rem)/0.9 var(--font-display);
+		letter-spacing: -0.05em;
+	}
+	.hero h1 {
+		font-size: clamp(1.6rem, 3.6vw, 2.6rem);
+		line-height: 1.1;
+		letter-spacing: -0.03em;
+		font-weight: 750;
+		color: var(--stamp);
+	}
+	.lede { color: var(--ink-2); font-size: 1.12rem; max-width: 38rem; }
+
+	.install {
+		width: min(100%, 34rem);
+		background: var(--term-bg);
+		color: var(--term-fg);
+		border-radius: 0.75rem;
+		text-align: left;
+		overflow: hidden;
+		margin-top: 0.5rem;
+	}
+	.tabs { display: flex; align-items: center; gap: 0.25rem; padding: 0.5rem 0.5rem 0; }
+	.tabs button {
+		font: 500 0.75rem/1 var(--font-mono);
+		padding: 0.45rem 0.65rem;
+		border: 0;
+		border-radius: 0.4rem;
+		background: transparent;
+		color: var(--term-dim);
+		cursor: pointer;
+	}
+	.tabs [aria-selected='true'] { background: var(--term-chip); color: var(--term-fg); }
+	.tabs .copy { margin-left: auto; border: 1px solid var(--term-chip); }
+	.install code {
+		display: block;
+		padding: 0.9rem 1rem 1rem;
+		font-size: 0.88rem;
+		white-space: nowrap;
+		overflow-x: auto;
+	}
+	.install code::before { content: '$ '; color: var(--term-prompt); }
+
+	.ctas { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem; }
+	.btn {
+		display: inline-flex; align-items: center;
+		padding: 0.7rem 1.15rem;
+		border-radius: 0.6rem;
+		border: 1px solid var(--rule);
+		background: var(--paper);
+		font-weight: 600; font-size: 0.95rem;
+		text-decoration: none;
+		transition: transform 0.15s ease, border-color 0.15s ease;
+	}
+	.btn:hover { transform: translateY(-1px); border-color: var(--ink-2); }
+	.btn.primary { background: var(--stamp); border-color: var(--stamp); color: #fff; }
+
+	/* The desk: a receipt, its chain behind it, and the pangolin checking it */
+	.desk { position: relative; width: min(100% - 1.75rem, 32rem); margin-top: 2.5rem; padding-bottom: 2rem; text-align: left; }
+	.receipt {
+		position: relative;
+		background: var(--paper);
+		border: 1.5px solid var(--ink);
+		border-radius: 0.5rem;
+		padding: 1.25rem 1.4rem 1.1rem;
+		font: 400 0.82rem/1.5 var(--font-mono);
+		box-shadow: 6px 6px 0 var(--paper-2);
+		transform: rotate(-1.2deg);
+	}
+	.receipt.ghost { position: absolute; inset: 0 0 2rem 0; background: var(--paper-2); box-shadow: none; border-color: var(--rule); }
+	.ghost.g1 { transform: translate(14px, -12px) rotate(1.5deg); }
+	.ghost.g2 { transform: translate(26px, -24px) rotate(3.5deg); opacity: 0.6; }
+	.r-head {
+		display: flex; justify-content: space-between;
+		text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem;
+		color: var(--ink-2);
+		padding-bottom: 0.7rem;
+		border-bottom: 1.5px dashed var(--rule);
+	}
+	.receipt dl { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: 0.35rem 0.75rem; margin: 0.9rem 0; }
+	.receipt dt { color: var(--ink-2); }
+	.receipt dd { margin: 0; overflow-wrap: anywhere; }
+	.receipt b { font-weight: 500; color: var(--stamp); }
+	.receipt b.allow { color: var(--lens); }
+	.r-foot { border-top: 1.5px dashed var(--rule); padding-top: 0.7rem; display: grid; gap: 0.2rem; color: var(--ink-2); font-size: 0.75rem; overflow-wrap: anywhere; }
+	.r-foot span { display: inline-block; width: 2.5rem; color: var(--ink); }
+
+	.stamp {
+		position: absolute;
+		right: -1.25rem;
+		top: 34%;
+		display: grid; justify-items: center;
+		padding: 0.45rem 1rem 0.5rem;
+		border: 3px solid var(--stamp);
+		outline: 1.5px solid var(--stamp);
+		outline-offset: 3px;
+		border-radius: 0.45rem;
+		background: color-mix(in srgb, var(--paper) 70%, transparent);
+		color: var(--stamp);
+		transform: rotate(-11deg);
+		animation: stamp 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) 0.5s backwards;
+	}
+	.stamp-top, .stamp-sub { font: 500 0.6rem/1.2 var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; }
+	.stamp-main { font: 800 1.7rem/1 var(--font-display); letter-spacing: 0.02em; text-transform: uppercase; }
+	@keyframes stamp {
+		from { transform: rotate(-11deg) scale(1.6); }
+		to { transform: rotate(-11deg) scale(1); }
+	}
+	.desk :global(.pangolin) {
+		position: absolute;
+		left: -9.5rem;
+		bottom: -0.5rem;
+		width: 170px;
+		height: auto;
+		transform: scaleX(-1) rotate(-4deg);
+	}
+
+	.block { padding-block: clamp(3.5rem, 8vw, 6rem); display: grid; gap: 2.25rem; border-top: 2px dashed var(--rule); }
+	.block-head { display: grid; gap: 0.9rem; max-width: 44rem; }
+	.block-head .sub { color: var(--ink-2); font-size: 1.1rem; }
+	.note { color: var(--ink-2); font-size: 0.95rem; max-width: 46rem; }
+
+	/* Ledger */
+	.ledger-scroll { overflow-x: auto; }
+	.ledger { width: 100%; min-width: 36rem; border-collapse: collapse; font-size: 0.98rem; }
+	.ledger th, .ledger td { text-align: left; padding: 0.9rem 1rem 0.9rem 0; vertical-align: top; border-bottom: 1px solid var(--rule); }
+	.ledger thead th { font: 500 0.75rem/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+	.ledger thead th:last-child { color: var(--stamp); }
+	.ledger tbody th { font-weight: 600; width: 22%; }
+	.ledger .logs { color: var(--ink-2); width: 33%; }
+	.ledger .tb { font-weight: 500; }
+
+	/* Steps */
+	.steps { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 2.5rem; align-items: start; }
+	.steps ol { list-style: none; counter-reset: s; margin: 0; padding: 0; display: grid; gap: 1.6rem; }
+	.steps li { counter-increment: s; display: grid; grid-template-columns: 2.6rem minmax(0, 1fr); color: var(--ink-2); }
+	.steps li::before {
+		content: counter(s);
+		grid-row: span 2;
+		display: grid; place-items: center;
+		width: 2rem; height: 2rem;
+		border: 1.5px solid var(--stamp);
+		border-radius: 50%;
+		color: var(--stamp);
+		font: 500 0.85rem/1 var(--font-mono);
+	}
+	.steps li b { color: var(--ink); display: block; font-weight: 600; }
+	.steps code { font-size: 0.88em; color: var(--ink); }
+	.term {
+		margin: 0;
+		background: var(--term-bg);
+		color: var(--term-fg);
+		border-radius: 0.75rem;
+		padding: 1.4rem 1.5rem;
+		font-size: 0.84rem;
+		line-height: 1.65;
+		overflow-x: auto;
+	}
+	.term .c { color: var(--term-dim); }
+	.term .p { color: var(--term-prompt); }
+	.term .ok { color: var(--term-ok); font-weight: 500; }
+
+	/* Cases */
+	.cases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+	.case {
+		display: grid; gap: 0.6rem; align-content: start;
+		padding: 1.4rem 1.5rem;
+		background: var(--paper-2);
+		border-radius: 0.75rem;
+	}
+	.case p { color: var(--ink-2); }
+	.case code { margin-top: 0.4rem; font-size: 0.8rem; color: var(--stamp); overflow-wrap: anywhere; }
+	.case code::before { content: '$ '; color: var(--ink-2); }
+
+	/* Regulations */
+	.regs { gap: 1.25rem; }
+	.regs ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+	.regs a {
+		display: inline-block;
+		padding: 0.45rem 0.8rem;
+		border: 1px solid var(--rule);
+		border-radius: 999px;
+		font: 500 0.82rem/1 var(--font-mono);
+		text-decoration: none;
+		color: var(--ink-2);
+	}
+	.regs a:hover { color: var(--ink); border-color: var(--ink-2); }
+
+	/* Closing */
+	.closing { background: var(--paper-2); }
+	.closing-row { display: flex; align-items: center; gap: 2.5rem; padding-block: clamp(3.5rem, 8vw, 5rem); }
+	.closing-row :global(img) { flex: none; width: 120px; height: auto; }
+	.closing-row > div { display: grid; gap: 1rem; max-width: 40rem; }
+	.closing-row p:not(.eyebrow) { color: var(--ink-2); }
+	.closing-row .ctas { justify-content: flex-start; }
+
+	.foot { border-top: 1px solid var(--rule); font-size: 0.9rem; color: var(--ink-2); }
+	.foot-row { display: flex; flex-wrap: wrap; gap: 1rem 2rem; justify-content: space-between; padding-block: 1.75rem calc(1.75rem + env(safe-area-inset-bottom, 0px)); }
+	.foot nav { display: flex; flex-wrap: wrap; gap: 1.25rem; }
+	.foot a { text-decoration: none; }
+	.foot a:hover { color: var(--ink); }
+
+	@media (max-width: 960px) {
+		.desk :global(.pangolin) { left: auto; right: -0.5rem; bottom: -2.5rem; width: 110px; transform: rotate(4deg); }
+	}
+	@media (max-width: 760px) {
+		.steps, .cases { grid-template-columns: minmax(0, 1fr); }
+		.stamp { right: 0.25rem; top: 0.25rem; scale: 0.75; animation: none; }
+		.closing-row { flex-direction: column; align-items: flex-start; gap: 1.5rem; }
+		.nav .wide { display: none; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.stamp { animation: none; }
+		.btn { transition: none; }
+	}
+</style>

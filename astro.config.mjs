@@ -11,7 +11,7 @@ export default defineConfig({
 			description: 'Audit trail for AI agents: every decision signed, chained and provable.',
 			logo: { src: './src/assets/mascot.webp', alt: 'Tenbri pangolin' },
 			favicon: '/favicon.png',
-			customCss: ['@fontsource-variable/fredoka', './src/styles/theme.css'],
+			customCss: ['./src/styles/theme.css'],
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/tenbri/tenbri' }],
 			editLink: { baseUrl: 'https://github.com/tenbri/site/edit/main/' },
 			lastUpdated: true,
