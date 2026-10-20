@@ -6,7 +6,7 @@ import CodeWindow from '../components/CodeWindow.astro';
 import TerminalPlayer from '../components/TerminalPlayer.astro';
 import claudeIcon from '@lobehub/icons-static-svg/icons/claude-color.svg?raw';
 import openaiIcon from '@lobehub/icons-static-svg/icons/openai.svg?raw';
-import langgraphIcon from '@lobehub/icons-static-svg/icons/langgraph-color.svg?raw';
+import langgraphIcon from '@lobehub/icons-static-svg/icons/langgraph.svg?raw';
 import langchainIcon from '@lobehub/icons-static-svg/icons/langchain-color.svg?raw';
 import { siPython, siTypescript } from 'simple-icons';
 
@@ -193,7 +193,7 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 		<section class="hero">
 			<div class="wrap hero-inner">
 				<h1 class="lockup">
-					<Image src={mascot} alt="" width={120} height={120} densities={[1, 2, 3]} loading="eager" />
+					<Image src={mascot} alt="" width={160} height={160} densities={[1, 2, 3]} loading="eager" />
 					<span>Tenbri</span>
 					<span class="sr">: audit trail for AI agents</span>
 				</h1>
@@ -359,9 +359,9 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 		gap: 1.6rem;
 		padding-block: clamp(3.5rem, 9vw, 6.5rem) clamp(3.5rem, 8vw, 5.5rem);
 	}
-	.lockup { display: flex; align-items: center; gap: clamp(0.6rem, 1.5vw, 1rem); margin: 0; }
-	.lockup :global(img) { width: clamp(72px, 11vw, 120px); height: auto; }
-	.lockup > span:not(.sr) { font: 800 clamp(3.4rem, 10vw, 6.6rem)/0.9 var(--font-display); letter-spacing: -0.05em; color: var(--ink); }
+	.lockup { display: flex; align-items: center; gap: clamp(0.4rem, 1.2vw, 0.8rem); margin: 0; }
+	.lockup :global(img) { width: clamp(92px, 14vw, 160px); height: auto; margin-block: -0.6rem; }
+	.lockup > span:not(.sr) { font: 800 clamp(3.2rem, 9vw, 6.2rem)/0.9 var(--font-display); letter-spacing: -0.05em; color: var(--ink); }
 	.tagline {
 		font: 750 clamp(1.7rem, 4.2vw, 2.7rem)/1.1 var(--font-display);
 		letter-spacing: -0.03em;
