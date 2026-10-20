@@ -1,0 +1,364 @@
+---
+title: Integrity
+description: How Tenbri makes edits detectable, with canonical bytes, a hash chain, signatures, HEAD, Merkle checkpoints, timestamps and receipts.
+---
+
+
+A stream cannot vouch for itself. Tenbri makes every change detectable by a verifier that holds a
+**trust root**: the fingerprint of the stream's genesis key, and any checkpoint it saw before.
+
+## Canonical bytes
+
+Every stored entry and every HEAD is one JSON object in its canonical form, as defined by
+[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) (JSON Canonicalization Scheme). In practice:
+no whitespace outside strings, members sorted by name, one fixed spelling for each string and
+integer.
+
+A stored line must equal the canonical form of its own parse, byte for byte. A verifier parses the
+line, serialises it again and compares. Any difference fails with `not_canonical`, even an extra
+space that changes nothing in the parsed value.
+
+Format v1 adds three limits:
+
+- **No duplicate keys**, at any depth (`duplicate_key`).
+- **Integers only**: `1.0`, `1e2` and `-0` fail with `not_integer`; integers outside
+  ±(2^53 - 1) fail with `integer_range`.
+- **Valid UTF-8**: invalid bytes, a lone surrogate or a byte order mark fail with `parse`.
+
+`tenbri append` canonicalises the JSON you give it. Duplicate keys and non-integers are rejected
+there too, never repaired.
+
+## Hash chain
+
+Each entry's **entry hash** is the SHA-256 of a zero byte followed by the stored line (signature
+included, line feed excluded):
+
+```text
+entry hash = SHA-256(0x00 || stored line)
+```
+
+This is the [RFC 6962](https://www.rfc-editor.org/rfc/rfc6962) leaf hash, so the same value is
+the leaf of the Merkle tree below. It is written `sha256:` and 64 hex digits.
+
+Every entry after the first carries `prev`, the entry hash of the entry before it. Editing,
+inserting, deleting or reordering an entry breaks the chain at that point: a wrong `prev` fails
+with `bad_prev`, a `seq` that is not the previous plus one fails with `bad_seq`.
+
+## Signatures
+
+Every entry is signed with Ed25519. The signed message is a domain prefix, a zero byte and the
+canonical entry without its `sig` member:
+
+```text
+message = "tenbri/entry/v1" || 0x00 || canonical(entry without "sig")
+```
+
+The signature covers every other member, `prev` and `signer` included. Verifiers use strict
+verification (RFC 8032), and a failure is `bad_signature`.
+
+Which key may sign what:
+
+- `key` entries are signed by the current **stream key**.
+- Every other entry is signed by a **session key** the stream key certified.
+
+A signer no earlier entry certified fails with `unknown_signer`; a key signing outside its role
+fails with `signer_not_allowed`. Expiry and revocation are in [Keys](/docs/concepts/keys/).
+
+**Attestations** are extra signatures by the principal or an approver, over the entry's draft
+(without `seq`, `prev`, `signer`, `sig` and `attestations`) and under their own prefix,
+`tenbri/attestation/v1`. The writer's signature covers them. Format v1 checks that each
+attestation verifies; whom the attesting key belongs to is for the verifier to decide.
+
+## HEAD
+
+HEAD is a small signed object at the root of the stream:
+
+```json
+{"batch":4,"counter":4,"hash":"sha256:c86c6372…","seq":4,"sig":"ed25519:76a6cc6a…","signer":"sess:2026-10-20:db131c41f8ad","stream":"tnb1:5db31441baa2d080326d9f6c83c95319","v":1}
+```
+
+It names the latest `seq`, its entry `hash`, the first `seq` of the `batch` holding it, and a
+`counter` that increases at every HEAD write. It is signed by the stream key or an unrevoked
+session key, under the prefix `tenbri/head/v1`, so an entry signature can never pass as a HEAD
+signature. A writer advances HEAD by compare-and-swap.
+
+A HEAD that does not match the stream, is unsigned, or has a lower counter than one the reader
+already saw fails with `bad_head`. A batch HEAD needs but the store lacks fails with
+`missing_batch`.
+
+## Checkpoints
+
+A **checkpoint** is a signed statement of a stream's size and the Merkle root of its first `size`
+entries. The tree is the RFC 6962 Merkle hash tree (as RFC 9162 defines it) over the entry hashes:
+entry `seq` is leaf `seq - 1`.
+
+Checkpoints are [C2SP signed notes](https://c2sp.org/signed-note) in the
+[C2SP checkpoint format](https://c2sp.org/tlog-checkpoint), so existing transparency-log tools can
+read them. The note text is three lines: the origin (the stream id), the size, and the root in
+base64:
+
+```text
+tnb1:5db31441baa2d080326d9f6c83c95319
+4
+Y8klGLPJWRoPh0XjwIDZtH95fpxRKlyS7MqHr2abP1g=
+```
+
+An empty line and one or more signature lines follow. The stream's signature line starts with the
+character U+2014, a space, the origin as key name, a space, then the base64 of a 4-byte key ID and
+the Ed25519 signature. A session key signs it; the stream key never signs checkpoints, so it can
+stay offline. Witnesses and auditors can add their own cosignature lines to the same note.
+
+A writer writes a checkpoint after advancing HEAD once 1,000 entries were added since the last
+one, or once at least one entry was added and 60 seconds passed, whichever comes first. It is
+stored as `checkpoints/<size, 12 digits>.note` and never rewritten. A writer also keeps the
+latest checkpoint it wrote next to the keys (`checkpoint.note` in the stream's key directory) and
+refuses to open a stream that fails against it: an older HEAD put back by someone with access to
+the store fails with `truncated`.
+
+The 60 seconds count from when the writer opened the stream or last wrote a checkpoint, so a
+one-shot `tenbri append` does not write one. A long-running writer (`tenbrid`, the Rust `Writer`)
+does. `tenbri checkpoint` seals one on demand, covering the whole stream:
+
+```sh
+tenbri checkpoint audit/support
+```
+
+```text
+checkpoint at size 4: checkpoints/000000000004.note
+```
+
+A checkpoint only protects what it covers once someone outside the operator holds it: an auditor,
+a witness, or a verifier that saw it before.
+
+## Timestamps
+
+A checkpoint carries no time, and an entry's `ts` is only what the writer claimed. An [RFC 3161](https://www.rfc-editor.org/rfc/rfc3161)
+timestamp authority (TSA) gives it independent time: it signs a token over the checkpoint's note
+text, which shows the checkpoint existed at that time. The token is stored next to the checkpoint
+as `anchors/<size, 12 digits>.tsr` and is never rewritten.
+
+- `tenbri checkpoint <stream> --tsa <URL>` seals a checkpoint and timestamps it, printing
+  `timestamped by <URL>: anchors/<n>.tsr` (or `already timestamped: ...` if it has a token).
+- `tenbrid` with an `[anchor]` table timestamps the latest checkpoint of every stream every
+  `every_s` seconds, hourly by default ([API](/docs/reference/api/#configuration-file)).
+
+## Receipts
+
+A **receipt** is a self-contained file that proves one or more entries are in a stream: the
+entries, the stream's key history (every `key` entry up to the checkpoint, starting with the
+genesis entry), a signed checkpoint that covers them, an inclusion proof for each, and the
+checkpoint's RFC 3161 tokens if it has any. The format is in
+[spec/receipts.md](https://github.com/tenbri/tenbri/blob/main/spec/receipts.md).
+
+A verifier checks a receipt with no network and no access to the stream, against the pinned
+fingerprint. Keys inside the receipt are only ever checked against that pin.
+
+<Tabs groupId="lang" persist items={["CLI","REST"]}>
+<Tab value="CLI">
+
+```sh
+tenbri receipt create audit/support --entry 3 --out receipt.json
+tenbri receipt verify receipt.json --key sha256:dc736478…
+```
+
+</Tab>
+<Tab value="REST">
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:7070/v1/streams/support/entries/01M5CWEGKFH78NNZ5XXH6K42NG/receipt > receipt.json
+tenbri receipt verify receipt.json --key sha256:dc736478…
+```
+
+`tenbrid` seals a checkpoint first if none covers the entry yet.
+
+</Tab>
+</Tabs>
+
+```text
+proves seq 3 (decision intent), id 01M5CWEGKFH78NNZ5XXH6K42NG, ts 2026-10-20T14:46:33.327Z (claimed by the writer)
+in stream tnb1:dc736478ac6b04bad25e3a3a6f8d71aa, checkpoint at size 4, pinned to sha256:dc736478…; key history: 2 key entries
+```
+
+`--entry` takes a sequence number or an entry id, and can be repeated. With `--tsa-roots <PEM>`,
+`receipt verify` also checks the RFC 3161 tokens against the TSA root certificates you trust and
+prints when each says the checkpoint existed; without it, it says the tokens were not checked. A
+receipt stays valid after an [erasure](/docs/concepts/privacy/#erasure): it holds no data key.
+
+Failures are `bad_receipt`, `bad_proof` and `bad_timestamp`, plus the checkpoint and entry codes
+([Errors](/docs/reference/errors/#receipts)).
+
+<Callout type="warn" title="Planned">
+Publishing checkpoints to auditors, witness cosigning and the C2SP tiled-log protocol are not built
+yet. Until then, hand checkpoints or receipts to the people who need to hold them yourself.
+</Callout>
+
+## What verification checks
+
+`tenbri verify <stream> --key <fingerprint>` reads the stream from HEAD and checks each entry, in
+order, stopping at the first failure:
+
+1. canonical bytes;
+2. top-level members, field rules and kind rules;
+3. `seq`;
+4. for entry 1, the genesis rules and the pinned fingerprint (`untrusted_root` on a mismatch);
+   for the others, `stream`, then `prev`;
+5. `id` uniqueness;
+6. the signer: certified, allowed for this kind, not revoked, not expired;
+7. the signature, then each attestation;
+8. `hlc`;
+9. intents, reconciles and approvals, then key events.
+
+Then it checks HEAD. If the stream has checkpoints, it also checks the stream against its own
+latest one. A revocation that reaches back is reported at the earliest entry it invalidates.
+
+`--key` takes the fingerprint (`sha256:…`) or the public key (`ed25519:…`) of the genesis key. On
+the machine that created the stream with `tenbri init`, `--key` can be left out: `init` recorded
+the fingerprint in the keys directory's `pins` file, and `verify` uses it and says so
+(`(the pin recorded in <keys>/pins)`). An auditor on another machine has no such record and still
+pins with `--key`; without either, `verify` exits 3 and prints the exact `--key` command, with the
+fingerprint read from the stream for you to compare with the one you were given
+([CLI reference](/docs/reference/cli/#pins)).
+
+The bindings and `tenbrid` run the same checks:
+
+<Tabs groupId="lang" persist items={["CLI","Python","TypeScript","REST"]}>
+<Tab value="CLI">
+
+```sh
+tenbri verify audit/support --key sha256:dc736478ac6b04bad25e3a3a6f8d71aa6cb2819729c01ce71b644ea250282154
+```
+
+</Tab>
+<Tab value="Python">
+
+```python
+from tenbri import Tenbri
+
+log = Tenbri.open("audit/support")
+report = log.verify("sha256:dc736478ac6b04bad25e3a3a6f8d71aa6cb2819729c01ce71b644ea250282154")
+print(report.ok, report.entries, report.checkpoint, report.broken)
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+import { Tenbri } from 'tenbri'
+
+const log = await Tenbri.open('audit/support')
+const report = await log.verify('sha256:dc736478ac6b04bad25e3a3a6f8d71aa6cb2819729c01ce71b644ea250282154')
+console.log(report.ok, report.entries, report.checkpoint, report.broken)
+```
+
+</Tab>
+<Tab value="REST">
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:7070/v1/streams/support/verify
+```
+
+`tenbrid` checks against the stream's configured pin (`streams.<name>.key`).
+
+</Tab>
+</Tabs>
+
+`report.ok` is true only when nothing is broken and a key was pinned. `broken` holds the first
+broken `seq`, the error `code` and a message, for example `untrusted_root` when the pin is not the
+genesis key.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Verified against the pinned key, from `--key` or the pin `tenbri init` recorded (and the checkpoint, if given) |
+| `1` | The stream does not verify, or does not match the `--checkpoint` given. The first broken sequence number and the error code are printed |
+| `2` | Any other error: a missing stream, a bad `--key`, a malformed checkpoint file |
+| `3` | No `--key` and no pin recorded by `tenbri init` on this machine: the stream agrees with its own genesis key, which proves nothing about who wrote it |
+
+A failure looks like this:
+
+```text
+broken at seq 3: bad_signature: the signature does not verify
+2 entries verified before it, stream tnb1:5db31441baa2d080326d9f6c83c95319
+```
+
+The full list of codes is in the [error reference](/docs/reference/errors/).
+
+## Queries through an index
+
+`tenbri query` and `tenbrid` answer queries from an index of the stream
+([Storage](/docs/reference/storage/#query-index)), but never with the index's copy of an entry.
+Each query re-reads from storage the batches holding the entries it returns and checks each entry's
+hash and stored line against what was indexed. An edit made on disk after indexing fails the query
+instead of being answered around:
+
+<Tabs groupId="lang" persist items={["CLI","REST"]}>
+<Tab value="CLI">
+
+```sh
+tenbri query audit/support --target zendesk:ticket/9
+```
+
+```text
+tenbri: the stream changed under the index at seq 3: run `tenbri verify`
+```
+
+Exit code 1, nothing on stdout.
+
+</Tab>
+<Tab value="REST">
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:7070/v1/streams/support/entries?target=zendesk:ticket/9"
+```
+
+```json
+{"error":{"code":"TENBRI_STREAM_BROKEN","message":"the stream changed under the index at seq 3: run `tenbri verify`"}}
+```
+
+HTTP 500.
+
+</Tab>
+</Tabs>
+
+This check covers only the entries returned, and their bytes: an answer marked `indexed` has not
+had its signature or chain checked. `tenbri query --verify` and `tenbri verify` read and verify the
+whole stream; with `--verify`, the same edit is reported as
+`broken at seq 3: bad_signature: the signature does not verify`.
+
+## Truncation and forks
+
+Without checkpoints, the chain and signatures detect any edit, reordering, insertion or deletion
+before HEAD, forged entries, and entries signed by a wrong, expired, revoked or uncertified key.
+
+They do not detect two things a key holder can do: cut the tail and re-sign HEAD, or rewrite the
+whole stream with the stream key.
+
+A checkpoint you hold closes that gap for the entries it covers:
+
+```sh
+tenbri verify audit/support --key sha256:5db31441… --checkpoint 000000000004.note
+```
+
+```text
+matches checkpoint tnb1:5db31441baa2d080326d9f6c83c95319 at size 4
+matches its latest checkpoint, at size 4
+verified 4 entries, stream tnb1:5db31441baa2d080326d9f6c83c95319, pinned to sha256:5db31441…
+```
+
+- **`truncated`**: the stream has fewer entries than the checkpoint covers. Reported at the first
+  missing `seq`.
+- **`fork`**: a Merkle consistency proof from the checkpoint to the stream's current tree fails,
+  so entries 1 to `size` are not the ones the checkpoint signed. Reported at `size`; the root alone
+  cannot say where the rewrite starts.
+- `bad_checkpoint`, `unknown_signer`, `signer_not_allowed` or `key_revoked`: the checkpoint is
+  malformed or not validly signed by a session key of this stream.
+
+Two holders shown different histories also catch it: their checkpoints are not consistent.
+Anything after a checkpoint's size, including truncation back to exactly that size, is not
+covered by it; a later checkpoint held outside the operator moves the line.
+
+A checkpoint adds to the pinned key; it does not replace it. `verify --checkpoint` without `--key`
+or a recorded pin still exits 3.

@@ -1,0 +1,166 @@
+---
+title: Storage
+description: Where a stream can live, the environment each backend reads, where keys are kept and the files inside a stream.
+---
+
+
+A stream is a set of plain files under one directory or object-store prefix. The same location
+syntax works in `tenbri` and in `tenbrid` (`streams.<name>.path`).
+
+## Locations
+
+| Location | Backend | Status | Cargo feature |
+| --- | --- | --- | --- |
+| `<root>/<stream>` (any path without `://`) | Local disk | Stable | none |
+| `s3://bucket/<prefix>` | AWS S3, MinIO and other S3-compatible stores | Stable (S3 tested on MinIO; real S3 before beta.1) | `s3` |
+| `r2://bucket/<prefix>` | Cloudflare R2 | Stable | `s3` |
+| `gs://bucket/<prefix>` | Google Cloud Storage | Experimental | `experimental` |
+| `az://container/<prefix>` | Azure Blob | Experimental | `experimental` |
+
+The `tenbri` CLI is built with `s3` by default, not with `experimental`. Any other scheme fails with
+``<url>: unknown store (s3:// and r2://; gs:// and az:// with the `experimental` feature)``.
+
+<Callout type="info" title="Planned">
+A Postgres backend is planned and not built.
+</Callout>
+
+- A local directory must exist when a stream is opened; `tenbri init` creates it, and refuses one
+  that is not empty.
+- An object-store prefix must be empty for `tenbri init` (no `HEAD`). A prefix of `""` means the
+  bucket's root.
+
+## Object store requirements
+
+Tenbri needs conditional writes:
+
+- put-if-absent: `PUT` with `If-None-Match: *`; the store answers 412 if the key exists;
+- compare-and-swap: `PUT` with `If-Match: <ETag>` (`If-None-Match: *` when creating).
+
+Opening a bucket runs a canary under `canary/`: a put-if-absent on a fresh key must succeed, a
+second one on the same key must be refused, and so must a compare-and-swap from a stale ETag. A
+store that accepts a conflicting write is refused, because two writers could then both win a batch.
+The canary object is deleted afterwards.
+
+A write is durable when the store acknowledges it.
+
+## Environment variables
+
+Credentials and endpoints come from the environment, as the providers' own tools read them.
+
+### s3:// (AWS S3)
+
+| Variable | Meaning |
+| --- | --- |
+| `AWS_ACCESS_KEY_ID` | Access key |
+| `AWS_SECRET_ACCESS_KEY` | Secret key |
+| `AWS_REGION` | Region |
+| other `AWS_*` | Read as the AWS tools read them |
+
+### s3:// on MinIO and other S3-compatible stores
+
+| Variable | Meaning |
+| --- | --- |
+| `AWS_ENDPOINT_URL` | The store's endpoint, for example `http://localhost:9000` |
+| `AWS_ALLOW_HTTP` | `true` for a plain HTTP endpoint |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | Credentials and region (the test suite uses `us-east-1` by default) |
+
+```bash
+export AWS_ENDPOINT_URL=http://localhost:9000
+export AWS_ALLOW_HTTP=true
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_REGION=us-east-1
+tenbri init s3://audit/support
+```
+
+### r2:// (Cloudflare R2)
+
+| Variable | Meaning |
+| --- | --- |
+| `CLOUDFLARE_ACCOUNT_ID` | Endpoint `https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com`; required unless an endpoint is set |
+| `AWS_ENDPOINT_URL` (or `AWS_ENDPOINT`) | Overrides the endpoint |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | An R2 API token's keys |
+
+The region is `auto`. Without an account id or endpoint, opening fails with
+`<url>: set CLOUDFLARE_ACCOUNT_ID (or AWS_ENDPOINT_URL) for R2`.
+
+### gs:// and az:// (Experimental)
+
+The `GOOGLE_*` and `AZURE_*` variables, as the providers' tools read them.
+
+## Keys kept apart
+
+Signing keys and data keys never live under the stream's directory or bucket prefix, so whoever can
+read or copy the log cannot sign as it.
+
+- Keys directory: `--keys`, else `$TENBRI_KEYS`, else `$XDG_CONFIG_HOME/tenbri/keys`, else
+  `~/.config/tenbri/keys` (`%APPDATA%\tenbri\keys` on Windows). In `tenbrid`: `keys` or
+  `TENBRI_KEYS`.
+- For a local stream, a keys directory and a stream directory that contain each other are refused:
+  `keys directory <dir> and stream <dir> must not contain each other`.
+- Each stream has its own directory, `<keys dir>/<stream id with ':' as '-'>/`, created owner-only.
+  It holds one `<name>.json` per key (its public description) and, for the file backend, its
+  `<name>.secret` (mode `0600`). With `tenbri init --keychain` the secret is in the OS keychain
+  instead.
+- `checkpoint.note` in that directory is the latest checkpoint the writer wrote: the HEAD floor. A
+  writer refuses to open a stream that fails against it.
+- Data keys for encrypted bodies are in `data/` in the same directory, one file per subject and
+  epoch (`s-<hex SHA-256 of the handle>.<epoch>.json`, the tenant's `tenant.<epoch>.json`). The
+  directory must be `0700` and each file `0600` on Unix. Do not keep them in the log's versioned or
+  Object Lock bucket, nor in its backups. See [Privacy](/docs/concepts/privacy/) and
+  [Keys](/docs/concepts/keys/).
+
+## Query index
+
+`tenbri query` and `tenbrid` answer queries from an index of each stream: a derived view, kept on
+the machine that queries, never in the stream. Deleting it loses nothing; `tenbri index rebuild`
+makes it again from the batches.
+
+| Backend | Files | Chosen by |
+| --- | --- | --- |
+| SQLite (default) | `index.sqlite` | `tenbri index rebuild`, `streams.<name>.index = "sqlite"` in `tenbrid` |
+| Parquet | `parquet/`, files any Arrow tool reads | `tenbri index rebuild --backend parquet`, `streams.<name>.index = "parquet"` |
+
+Each stream's index is in `<index dir>/<stream id with ':' as '-'>/`. The index directory is
+`$TENBRI_INDEX_DIR` (`index_dir` in `tenbrid`), else the user's cache directory:
+`~/Library/Caches/tenbri/index` on macOS, `$XDG_CACHE_HOME/tenbri/index` or
+`~/.cache/tenbri/index` on Linux, `%LOCALAPPDATA%\tenbri\index` on Windows.
+
+The index finds entries; it never supplies them. Every query, in `tenbri query` and in `tenbrid`,
+re-reads from the stream the batches that hold the entries it returns (listing `batches/` to find
+them) and checks each entry's hash and stored line against the index's. A batch edited after it
+was indexed fails the query: `tenbri query` exits 1 and `tenbrid` returns `TENBRI_STREAM_BROKEN`
+([CLI](/docs/reference/cli/#query), [API](/docs/reference/api/#query-parameters)). Signatures and
+the rest of the stream are checked by `tenbri query --verify` and `tenbri verify`.
+
+The index holds refs, targets and subject handles in plaintext. `tenbri erase` deletes the erased
+subject's rows, and a rebuild leaves them out ([Privacy](/docs/concepts/privacy/#erasure)).
+
+## Layout of a stream
+
+```text
+<stream>/
+  HEAD                              compare-and-swap
+  batches/000000000001.jsonl        named by first seq; written once, never rewritten
+  checkpoints/000000002000.note     signed checkpoint at size 2000
+  anchors/000000002000.tsr          RFC 3161 token for that checkpoint
+  blobs/ct-sha256/ab/cd...          encrypted bodies
+```
+
+| Path | Content |
+| --- | --- |
+| `HEAD` | One canonical JSON object, no trailing line feed: `v`, `stream`, `seq`, `hash`, `counter`, `batch`, `signer`, `sig`. Updated by compare-and-swap. |
+| `batches/<first seq>.jsonl` | Consecutive entries, one canonical entry per line, each followed by one line feed. The name is the first sequence number zero-padded to at least 12 digits. Written with put-if-absent, never rewritten. No empty lines, no carriage returns, no missing final line feed. |
+| `checkpoints/<size>.note` | A C2SP signed note: origin (stream id), size, Merkle root. Written with put-if-absent. |
+| `anchors/<size>.tsr` | The RFC 3161 timestamp response over the checkpoint at that size |
+| `blobs/ct-sha256/<2 hex>/<62 hex>` | An encrypted body, addressed by the SHA-256 of the whole blob |
+| `.<name>` | Temporary files; never part of the stream |
+
+Readers follow `HEAD`, never directory listings: they read `batches/000000000001.jsonl`, then the
+batch named one past its last entry, until entry `HEAD.seq`. A batch beyond `HEAD` is invisible.
+
+The writer adds a checkpoint after 1,000 new entries, or when at least one entry was added and 60
+seconds have passed, whichever comes first. A checkpoint is not needed to read or verify a stream.
+
+Format details: [Integrity](/docs/concepts/integrity/) and
+[spec/format-v1.md](https://github.com/tenbri/tenbri/blob/main/spec/format-v1.md), section 7.

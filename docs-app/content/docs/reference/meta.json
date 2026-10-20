@@ -1,0 +1,11 @@
+{
+  "pages": [
+    "cli",
+    "entry-format",
+    "errors",
+    "schemas",
+    "api",
+    "storage",
+    "sdk"
+  ]
+}

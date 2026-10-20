@@ -1,0 +1,880 @@
+---
+title: OpenAI Agents SDK
+description: "Record an OpenAI Agents SDK run's tool calls, refusals, handoffs and approvals as signed decisions: tenbri.init() and one instrument line, RunState.approve and reject included."
+---
+
+
+Two lines record what every agent of the
+[OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) does in a Tenbri stream:
+`tenbri.init()` opens the stream, `tenbri.instrument_openai_agents()` (`instrumentOpenAIAgents()`
+in TypeScript) hooks every run. Each tool call becomes an intent that is durable before the tool
+runs, then its outcome; refused calls, handoffs between agents and the answers a person gives
+through `RunState.approve` and `reject` are recorded too. No `hooks=` to pass.
+
+## Quick start
+
+### 1. Install
+
+<Tabs groupId="lang" persist items={["Python","TypeScript"]}>
+<Tab value="Python">
+
+Python 3.10 or later.
+
+```sh tab="pip" tab-group="py-pkg"
+pip install --pre tenbri-openai-agents
+```
+
+```sh tab="uv" tab-group="py-pkg"
+uv add --prerelease=allow tenbri-openai-agents
+```
+
+```sh tab="poetry" tab-group="py-pkg"
+poetry add --allow-prereleases tenbri-openai-agents
+```
+
+This brings the `tenbri` binding (0.1.0-beta.2) and `openai-agents` (0.23 or 0.24, the two
+releases CI tests).
+
+</Tab>
+<Tab value="TypeScript">
+
+Node 20 or later.
+
+```sh tab="npm" tab-group="js-pkg"
+npm install @tenbri/openai-agents@next tenbri@next @openai/agents zod
+```
+
+```sh tab="pnpm" tab-group="js-pkg"
+pnpm add @tenbri/openai-agents@next tenbri@next @openai/agents zod
+```
+
+```sh tab="yarn" tab-group="js-pkg"
+yarn add @tenbri/openai-agents@next tenbri@next @openai/agents zod
+```
+
+```sh tab="bun" tab-group="js-pkg"
+bun add @tenbri/openai-agents@next tenbri@next @openai/agents zod
+```
+
+The adapter needs `@openai/agents-core` 0.19 or 0.20, which `@openai/agents` 0.20 brings. `zod`
+describes the tool's parameters. The snippets on this page are ES modules with top-level `await`:
+set `"type": "module"` in `package.json` (`npm pkg set type=module`).
+
+</Tab>
+</Tabs>
+
+### 2. Instrument your agent
+
+Say what a refund is in `tenbri.toml`, next to your code. The target names the tool's arguments in
+braces and is filled from each call; the policy is the rule recorded as having allowed it:
+
+```toml title="tenbri.toml"
+[actions.issue_refund]
+target = "stripe:{charge}"     # {charge} is filled from the tool call's arguments
+policy = "policy:refund@14"    # the rule that allowed it: ref@version
+```
+
+Then add the two lines to your agent. Nothing else in it changes:
+
+<Tabs groupId="lang" persist items={["Python","TypeScript"]}>
+<Tab value="Python">
+
+```python title="agent.py"
+import asyncio
+
+import tenbri
+from agents import Agent, Runner, function_tool
+
+tenbri.init()  # reads TENBRI_STREAM... and ./tenbri.toml
+tenbri.instrument_openai_agents()  # every run from here on is recorded
+
+@function_tool
+def issue_refund(charge: str, amount: int) -> str:
+    """Refunds `amount` EUR on the card charge `charge`."""
+    return f"refunded {amount} EUR on {charge}"
+
+async def main():
+    agent = Agent(name="support", instructions="You handle refunds.", tools=[issue_refund])
+    result = await Runner.run(agent, "Refund 20 EUR on ch_1.")
+    print(result.final_output)
+    print("pin this:", tenbri.default().fingerprint)
+
+asyncio.run(main())
+```
+
+Every `Runner.run`, `run_sync` and `run_streamed` from then on is recorded, and every
+`RunState.approve` and `reject`. Hooks you pass yourself still run.
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts title="agent.ts"
+import { Agent, run, tool } from '@openai/agents'
+import { init } from 'tenbri'
+import { instrumentOpenAIAgents } from '@tenbri/openai-agents'
+import { z } from 'zod'
+
+const log = await init() // reads TENBRI_STREAM... and ./tenbri.toml
+instrumentOpenAIAgents() // every run from here on is recorded
+
+const issueRefund = tool({
+  name: 'issue_refund',
+  description: 'Refunds `amount` EUR on the card charge `charge`.',
+  parameters: z.object({ charge: z.string(), amount: z.number() }),
+  execute: async ({ charge, amount }) => `refunded ${amount} EUR on ${charge}`,
+})
+
+const agent = new Agent({ name: 'support', instructions: 'You handle refunds.', tools: [issueRefund] })
+const result = await run(agent, 'Refund 20 EUR on ch_1.')
+console.log(result.finalOutput)
+console.log('pin this:', log.fingerprint)
+```
+
+Every `run()` and `Runner.run` from then on is recorded, with the agents it hands off to, and every
+`RunState` `approve()` and `reject()`. A run that is not streamed returns once its entries are
+written.
+
+</Tab>
+</Tabs>
+
+Each tool call is by `agent:<the agent's name>`, here `agent:support`: no `TENBRI_AGENT` needed.
+
+### 3. Run it
+
+Point Tenbri at a stream, with `OPENAI_API_KEY` set:
+
+<Tabs groupId="lang" persist items={["Python","TypeScript"]}>
+<Tab value="Python">
+
+```sh
+export TENBRI_STREAM=./audit
+python agent.py
+```
+
+```text
+Refunded 20 EUR on ch_1.
+pin this: sha256:4d15c116762587de6cd7f33dc6661ac2469710405e998191961c862b8b57865e
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+Node 22.18 or later runs `.ts` files as they are; on Node 20, use `npx tsx agent.ts`.
+
+```sh
+export TENBRI_STREAM=./audit
+node agent.ts
+```
+
+```text
+Refunded 20 EUR on ch_1.
+pin this: sha256:15fff6226bde0bb2f59095ae7b43db98dbe158e7019015f8a95b15fd3c70934f
+```
+
+</Tab>
+</Tabs>
+
+`init()` creates the stream and its signing keys on first use. The keys go to `$TENBRI_KEYS`, else
+`~/.config/tenbri/keys`, never into the stream ([keys](/docs/concepts/keys/)). Keep the fingerprint:
+it is what you verify against. This output comes from a run with a scripted model in place of the
+real one (see [testing offline](#test-your-agent-offline)) that asks for `issue_refund` once, then
+answers.
+
+### 4. See the entries
+
+<Tabs groupId="lang" persist items={["CLI","Python","TypeScript"]}>
+<Tab value="CLI">
+
+```sh
+tenbri tail ./audit -n 2 --no-follow
+```
+
+```text
+     3  2026-10-20T16:08:50.174Z  decision intent   agent:support            issue_refund stripe:ch_1         -        unpinned
+     4  2026-10-20T16:08:50.196Z  decision outcome  agent:support            issue_refund stripe:ch_1         ok       unpinned
+```
+
+`unpinned`: `init()` records no pin for the CLI, so `tail` cannot check the stream against
+your fingerprint until you pass it with `--key`, as `verify` does next. Piped, `tail` prints each
+entry as JSON.
+
+```sh
+tenbri verify ./audit --key sha256:4d15c116…   # your full fingerprint
+```
+
+```text
+verified 4 entries, stream tnb1:4d15c116762587de6cd7f33dc6661ac2, pinned to sha256:4d15c116762587de6cd7f33dc6661ac2469710405e998191961c862b8b57865e
+```
+
+</Tab>
+<Tab value="Python">
+
+```python title="read.py"
+import sys
+
+from tenbri import Tenbri
+
+# key: the fingerprint you pinned when the stream was created
+log = Tenbri.open("./audit", key=sys.argv[1])
+report = log.verify()
+print("ok:", report.ok, "entries:", report.entries)
+for m in log.query(action="issue_refund"):
+    e = m.entry
+    print(m.verification, e["seq"], e["phase"], e.get("status", ""), e["action"], e.get("rule", ""))
+log.close()
+```
+
+```sh
+python read.py sha256:4d15c116…   # your full fingerprint
+```
+
+```text
+ok: True entries: 4
+verified 3 intent  {'target': 'stripe:ch_1', 'type': 'issue_refund'} {'ref': 'policy:refund', 'result': 'allow', 'version': '14'}
+verified 4 outcome ok {'target': 'stripe:ch_1', 'type': 'issue_refund'}
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts title="read.ts"
+import { Tenbri } from 'tenbri'
+
+// key: the fingerprint you pinned when the stream was created
+const log = await Tenbri.open('./audit', { key: process.argv[2] })
+const report = await log.verify()
+console.log('ok:', report.ok, 'entries:', report.entries)
+for (const { verification, entry: e } of await log.query({ action: 'issue_refund' })) {
+  console.log(verification, e.seq, e.phase, e.status ?? '', e.action, e.rule ?? '')
+}
+await log.close()
+```
+
+```sh
+node read.ts sha256:15fff622…   # your full fingerprint
+```
+
+```text
+ok: true entries: 4
+verified 3 intent  { target: 'stripe:ch_1', type: 'issue_refund' } { ref: 'policy:refund', result: 'allow', version: '14' }
+verified 4 outcome ok { target: 'stripe:ch_1', type: 'issue_refund' }
+```
+
+</Tab>
+</Tabs>
+
+Entries 1 and 2 are the stream's key entries. Entry 3 is the intent, written before `issue_refund`
+ran: the target comes from `tenbri.toml`, filled with the call's `charge`, and the rule is its
+`policy`. Entry 4 is the outcome. The arguments and the result are not stored; the intent carries
+the SDK's trace id.
+
+## Configuration
+
+### Environment variables
+
+`tenbri.init()` (`init()`) reads these; an argument (`init(approver=...)`, `init({ approver })`)
+wins over its variable.
+
+| Variable | Argument | What it is |
+| --- | --- | --- |
+| `TENBRI_STREAM` | `stream` | Where entries go: a directory, `file://...`, `s3://bucket/prefix` or `r2://bucket/prefix`. Required. |
+| `TENBRI_KEYS` | `keys` | The keys directory, apart from the stream. Default `~/.config/tenbri/keys`. |
+| `TENBRI_AGENT` | `agent` | Not used here: each call is by `agent:<the agent's name>`. |
+| `TENBRI_APPROVER` | `approver` | Who answers interruptions: `person:alice`. |
+| `TENBRI_SCHEMA` | `schema` | The action schemas. Default `./tenbri.toml` when there is one. |
+|  | `fail_open` (`failOpen`) | Let tools run, unrecorded and with a warning, when their intent cannot be written. Default: block them. |
+
+`init()` flushes and closes the stream when the process exits. In Python, `with tenbri.init(...) as
+log:` scopes it to a block; in TypeScript, `await using log = await init(...)`.
+
+### Map tool calls to actions
+
+A tool call is the action of the tool's name, or of the `[actions.*]` table in `tenbri.toml` that
+its name ends with (an MCP tool `mcp__billing__issue_refund` is `issue_refund`). From that table,
+the record takes `target`, with each `{argument}` filled from the call's arguments (`{order.id}`
+reads a nested field), and `policy`, `"ref@version"`, as the intent's `rule`. In `tenbri.toml`, a
+target without placeholders is a pattern for validation only and is not recorded.
+
+`tenbri.toml` is the same file `tenbri schema check` and `tenbrid` validate entries against. A
+plain dict (object) in code says the same and wins over the file, per tool name. It can rename the
+action, and take functions of the arguments:
+
+```python tab="Python" tab-group="lang"
+tenbri.instrument_openai_agents(
+    actions={
+        "issue_refund": {"target": "stripe:{charge}", "policy": "policy:refund@14"},
+        "close": {"action": "close_ticket", "target": lambda args: f"ticket:{args['id']}"},
+    }
+)
+```
+
+```ts tab="TypeScript" tab-group="lang"
+instrumentOpenAIAgents({
+  actions: {
+    issue_refund: { target: 'stripe:{charge}', policy: 'policy:refund@14' },
+    close: { action: 'close_ticket', target: (args) => `ticket:${args.id}` },
+  },
+})
+```
+
+A tool neither names is recorded under its own name, with no target.
+
+### Options
+
+Python: `tenbri.instrument_openai_agents(**options)`. TypeScript: `instrumentOpenAIAgents({ ... })`.
+
+| Python | TypeScript | Default | What it does |
+| --- | --- | --- | --- |
+| `actions` | `actions` | `tenbri.toml` | Per tool name: `action`, `target`, `subject` (templates or functions of the arguments) and `policy`. Wins over the file. |
+| `approver` | `approver` | `TENBRI_APPROVER` | Who answers an interruption: a principal, or a function of the `ToolApprovalItem` returning one. |
+| `tools` | `tools` | every tool (TypeScript: every function tool) | Names to record, or a predicate of the name. |
+| `subject` | `subject` | none | The pseudonymous handle of the person the runs are about, for per-subject keys and erasure. |
+| `fail_open` | `failOpen` | `init()`'s, `False` | Let actions run, unrecorded and with a warning, when the stream cannot be written. |
+
+In Python, `tenbri_openai_agents.uninstrument()` stops recording the runs started after it
+(`uninstrumentOpenAIAgents()` in TypeScript).
+
+## Approvals
+
+The SDK pauses a run when a tool's `needs_approval` (`needsApproval`) says so, and returns the
+pending calls as `result.interruptions`. Answer them the SDK's way; each answer is recorded before
+the run resumes:
+
+- `state.approve(item)` writes an `approval` entry by the approver **first**. When the run resumes,
+  the tool's intent names it: `approval: {by, entry}`.
+- `state.reject(item)` writes the call's intent and a `refused` outcome whose `principal` is the
+  approver.
+
+Calls the model asked for that never started (a tool input guardrail stopped them) are recorded as
+`refused` without a person.
+
+Refunds over 50 EUR need a person; this one approves up to 100 EUR and rejects the rest:
+
+<Tabs groupId="lang" persist items={["Python","TypeScript"]}>
+<Tab value="Python">
+
+```python title="refunds.py"
+import asyncio
+import json
+
+import tenbri
+from agents import Agent, Runner, function_tool
+
+tenbri.init()  # TENBRI_STREAM, TENBRI_APPROVER, ./tenbri.toml
+tenbri.instrument_openai_agents()
+
+async def over_50(ctx, args, call_id):
+    return args["amount"] > 50
+
+@function_tool(needs_approval=over_50)
+def issue_refund(charge: str, amount: int) -> str:
+    """Refunds `amount` EUR on the card charge `charge`."""
+    return f"refunded {amount} EUR on {charge}"
+
+def ask_a_person(item):
+    # Your review step: a ticket, a Slack button, a CLI prompt. Here: refunds up to 100 EUR pass.
+    return json.loads(item.arguments)["amount"] <= 100
+
+async def main():
+    agent = Agent(name="support", instructions="You handle refunds.", tools=[issue_refund])
+    result = await Runner.run(agent, "Refund ch_1, ch_2 and ch_3.")
+    while result.interruptions:
+        state = result.to_state()
+        for item in result.interruptions:
+            if ask_a_person(item):
+                state.approve(item)  # an approval by TENBRI_APPROVER
+            else:
+                state.reject(item)  # a refused outcome by TENBRI_APPROVER
+        result = await Runner.run(agent, state)
+
+    for m in tenbri.default().query(action="issue_refund"):
+        e = m.entry
+        who = f"{e['principal']['kind']}:{e['principal']['id']}"
+        print(e["seq"], e["kind"], e.get("phase", ""), e.get("status", ""), who, e["action"]["target"])
+
+asyncio.run(main())
+```
+
+```sh
+export TENBRI_STREAM=./audit TENBRI_APPROVER=person:alice
+python refunds.py
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts title="refunds.ts"
+import { Agent, run, tool, type RunToolApprovalItem } from '@openai/agents'
+import { init } from 'tenbri'
+import { instrumentOpenAIAgents } from '@tenbri/openai-agents'
+import { z } from 'zod'
+
+const log = await init() // TENBRI_STREAM, TENBRI_APPROVER, ./tenbri.toml
+instrumentOpenAIAgents()
+
+const issueRefund = tool({
+  name: 'issue_refund',
+  description: 'Refunds `amount` EUR on the card charge `charge`.',
+  parameters: z.object({ charge: z.string(), amount: z.number() }),
+  needsApproval: async (_context, { amount }) => amount > 50,
+  execute: async ({ charge, amount }) => `refunded ${amount} EUR on ${charge}`,
+})
+
+// Your review step: a ticket, a Slack button, a CLI prompt. Here: refunds up to 100 EUR pass.
+const askAPerson = (item: RunToolApprovalItem) =>
+  item.rawItem.type === 'function_call' && JSON.parse(item.rawItem.arguments).amount <= 100
+
+const agent = new Agent({ name: 'support', instructions: 'You handle refunds.', tools: [issueRefund] })
+let result = await run(agent, 'Refund ch_1, ch_2 and ch_3.')
+while (result.interruptions.length) {
+  for (const item of result.interruptions) {
+    if (askAPerson(item)) result.state.approve(item) // an approval by TENBRI_APPROVER
+    else result.state.reject(item) // a refused outcome by TENBRI_APPROVER
+  }
+  result = await run(agent, result.state)
+}
+
+for (const { entry: e } of await log.query({ action: 'issue_refund' })) {
+  console.log(e.seq, e.kind, e.phase ?? '', e.status ?? '', `${e.principal?.kind}:${e.principal?.id}`, e.action?.target)
+}
+```
+
+```sh
+export TENBRI_STREAM=./audit TENBRI_APPROVER=person:alice
+node refunds.ts
+```
+
+</Tab>
+</Tabs>
+
+With a scripted model that asks for 20 EUR on `ch_1`, 80 EUR on `ch_2` and 500 EUR on `ch_3` in
+one turn, both print:
+
+```text
+3 decision intent  agent:support stripe:ch_1
+4 decision outcome ok agent:support stripe:ch_1
+5 approval   person:alice stripe:ch_2
+6 decision intent  agent:support stripe:ch_3
+7 decision outcome refused person:alice stripe:ch_3
+8 decision intent  agent:support stripe:ch_2
+9 decision outcome ok agent:support stripe:ch_2
+```
+
+The 20 EUR refund ran at once. The other two paused the run. Alice's approval (`seq` 5) came
+before the intent that names it (`seq` 8); her rejection is the `refused` outcome at `seq` 7.
+
+When the person who answers changes per call, pass a function of the item instead of
+`TENBRI_APPROVER`; `reviewer_of(item)` (`reviewerOf(item)`) stands for your own lookup:
+
+```python tab="Python" tab-group="lang"
+tenbri.instrument_openai_agents(approver=lambda item: f"person:{reviewer_of(item)}")
+```
+
+```ts tab="TypeScript" tab-group="lang"
+instrumentOpenAIAgents({ approver: (item) => `person:${reviewerOf(item)}` })
+```
+
+With no approver at all, an approval writes no entry and logs
+`tenbri: c2 approved, by nobody known: set TENBRI_APPROVER` (TypeScript: without the comma).
+
+## Choose where entries go
+
+The stream is wherever `TENBRI_STREAM` points; the code does not change.
+
+| Location | `TENBRI_STREAM` | Credentials |
+| --- | --- | --- |
+| A local directory | `./audit` or `file:///var/lib/audit/support` | none |
+| AWS S3, MinIO | `s3://bucket/prefix` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`; `AWS_ENDPOINT_URL` (and `AWS_ALLOW_HTTP=true` for plain HTTP) for MinIO |
+| Cloudflare R2 | `r2://bucket/prefix` | `CLOUDFLARE_ACCOUNT_ID`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
+
+Signing keys stay on the machine that writes; only entries go to the bucket, with
+`"durability":"replicated"`. See [Storage](/docs/reference/storage/) for every variable. The
+bindings do not write through a `tenbrid` server; to send entries to `tenbrid` over REST, record
+by hand as in [any other framework](/docs/adapters/planned/#use-tenbri-from-any-framework-today).
+
+## Read back and verify
+
+Anyone with read access to the stream and its fingerprint can check it; no keys needed. Pin the
+fingerprint you got at creation. `init()` records no pin for the CLI (only `tenbri init` does), so
+without `--key`, `tenbri verify` only reports `consistent` and
+`NOT pinned: this only shows the stream agrees with its own genesis key`, exits 3, and prints the
+`tenbri verify ./audit --key sha256:…` command to run once you have checked the fingerprint.
+
+<Tabs groupId="lang" persist items={["CLI","Python","TypeScript"]}>
+<Tab value="CLI">
+
+```sh
+tenbri verify ./audit --key sha256:4d15c116…                    # the whole stream
+tenbri query ./audit --action issue_refund --key sha256:4d15c116…
+tenbri query ./audit --principal person:alice --key sha256:4d15c116…
+tenbri schema check ./audit                                     # entries against tenbri.toml
+tenbri tail ./audit --key sha256:4d15c116…                      # follow new entries
+```
+
+</Tab>
+<Tab value="Python">
+
+```python
+log = Tenbri.open("./audit", key="sha256:4d15c116…")
+report = log.verify()                          # report.ok, report.entries, report.broken
+refunds = log.query(action="issue_refund", target="stripe:ch_2")
+by_alice = log.query(principal="person:alice")
+```
+
+From inside the agent's process, `tenbri.default()` is the stream `init()` opened, with the same
+`verify` and `query`.
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+const log = await Tenbri.open('./audit', { key: 'sha256:15fff622…' })
+const report = await log.verify() // report.ok, report.entries, report.broken
+const refunds = await log.query({ action: 'issue_refund', target: 'stripe:ch_2' })
+const byAlice = await log.query({ principal: 'person:alice' })
+```
+
+From inside the agent's process, `await defaultStream()` is the stream `init()` opened.
+
+</Tab>
+</Tabs>
+
+Each match carries `verification`: `verified` when a key is pinned, `unpinned` when not. See the
+[CLI reference](/docs/reference/cli/).
+
+## Test your agent offline
+
+Give the agent a scripted model: a `Model` that returns the next prepared turn. The SDK runs as
+usual, with no API key and no network, and you assert on what the stream holds. Give `init()` a
+stream and keys in a temporary directory, so tests never touch your real keys:
+
+<Tabs groupId="lang" persist items={["Python","TypeScript"]}>
+<Tab value="Python">
+
+```python title="test_agent.py"
+import asyncio
+import json
+
+import tenbri
+from agents import Agent, Runner, function_tool, set_trace_processors
+from agents.items import ModelResponse
+from agents.models.interface import Model
+from agents.usage import Usage
+from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
+
+set_trace_processors([])  # no API key: export traces nowhere (entries still carry their ids)
+
+class Scripted(Model):
+    """Plays the model's turns from a script: no API key, no network."""
+
+    def __init__(self, *turns):
+        self.turns = list(turns)
+
+    async def get_response(self, *args, **kwargs):
+        return ModelResponse(output=self.turns.pop(0), usage=Usage(), response_id=None)
+
+    def stream_response(self, *args, **kwargs):
+        raise NotImplementedError
+
+def call(name, call_id, **args):
+    return ResponseFunctionToolCall(
+        id=call_id, call_id=call_id, type="function_call", name=name, arguments=json.dumps(args)
+    )
+
+def say(text):
+    content = [ResponseOutputText(text=text, type="output_text", annotations=[])]
+    return ResponseOutputMessage(id="m", type="message", role="assistant", status="completed", content=content)
+
+@function_tool
+def issue_refund(charge: str, amount: int) -> str:
+    """Refunds `amount` EUR on the card charge `charge`."""
+    return f"refunded {amount} EUR on {charge}"
+
+def test_refund_is_recorded(tmp_path):
+    # A stream and keys of its own: the test never touches your real keys directory.
+    with tenbri.init(tmp_path / "audit", keys=tmp_path / "keys") as log:
+        tenbri.instrument_openai_agents(actions={"issue_refund": {"target": "stripe:{charge}"}})
+        model = Scripted([call("issue_refund", "c1", charge="ch_1", amount=20)], [say("Refunded.")])
+        agent = Agent(name="support", tools=[issue_refund], model=model)
+        asyncio.run(Runner.run(agent, "Refund 20 EUR on ch_1."))
+
+        entries = [m.entry for m in log.query(action="issue_refund")]
+        assert [(e["phase"], e.get("status")) for e in entries] == [("intent", None), ("outcome", "ok")]
+        assert entries[0]["action"]["target"] == "stripe:ch_1"
+        assert entries[0]["principal"] == {"kind": "agent", "id": "support"}
+        assert log.verify(log.fingerprint).ok
+```
+
+```sh
+python -m pytest -q test_agent.py
+```
+
+```text
+.                                                                        [100%]
+1 passed in 0.76s
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts title="agent.test.ts"
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Agent, Usage, run, setTraceProcessors, tool, type AgentOutputItem, type Model } from '@openai/agents'
+import { init } from 'tenbri'
+import { instrumentOpenAIAgents } from '@tenbri/openai-agents'
+import { z } from 'zod'
+
+setTraceProcessors([]) // no API key: export traces nowhere (entries still carry their ids)
+
+/** Plays the model's turns from a script: no API key, no network. */
+function scripted(...turns: AgentOutputItem[][]): Model {
+  return {
+    async getResponse() {
+      return { output: turns.shift() ?? [], usage: new Usage(), responseId: undefined }
+    },
+    getStreamedResponse() {
+      throw new Error('not scripted')
+    },
+  }
+}
+const call = (name: string, callId: string, args: object): AgentOutputItem => ({
+  type: 'function_call', name, callId, arguments: JSON.stringify(args), status: 'completed',
+})
+const say = (text: string): AgentOutputItem => ({
+  type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text }],
+})
+
+const issueRefund = tool({
+  name: 'issue_refund',
+  description: 'Refunds `amount` EUR on the card charge `charge`.',
+  parameters: z.object({ charge: z.string(), amount: z.number() }),
+  execute: async ({ charge, amount }) => `refunded ${amount} EUR on ${charge}`,
+})
+
+test('a refund is recorded', async () => {
+  // A stream and keys of its own: the test never touches your real keys directory.
+  const dir = mkdtempSync(join(tmpdir(), 'audit-'))
+  const log = await init({ stream: join(dir, 'audit'), keys: join(dir, 'keys') })
+  instrumentOpenAIAgents({ actions: { issue_refund: { target: 'stripe:{charge}' } } })
+  const model = scripted([call('issue_refund', 'c1', { charge: 'ch_1', amount: 20 })], [say('Refunded.')])
+  await run(new Agent({ name: 'support', tools: [issueRefund], model }), 'Refund 20 EUR on ch_1.')
+
+  const entries = (await log.query({ action: 'issue_refund' })).map((m) => m.entry)
+  assert.deepEqual(entries.map((e) => [e.phase, e.status]), [['intent', undefined], ['outcome', 'ok']])
+  assert.equal(entries[0].action?.target, 'stripe:ch_1')
+  assert.deepEqual(entries[0].principal, { kind: 'agent', id: 'support' })
+  assert.ok((await log.verify(log.fingerprint!)).ok)
+  await log.close()
+})
+```
+
+```sh
+node --test agent.test.ts
+```
+
+```text
+✔ a refund is recorded (106.04625ms)
+ℹ tests 1
+ℹ pass 1
+ℹ fail 0
+```
+
+</Tab>
+</Tabs>
+
+In TypeScript a tool belongs to one recorder: build fresh tools or agents per test if each test
+opens its own stream.
+
+## Troubleshooting
+
+These messages come from real runs; paths are shortened.
+
+| Message | Cause | What to do |
+| --- | --- | --- |
+| `InvalidRequestError: no stream: pass tenbri.init(stream) or set TENBRI_STREAM to a directory or s3://bucket/prefix` (TypeScript: `pass init({ stream })`) | `init()` found no stream. | Set `TENBRI_STREAM`, or pass the stream to `init()`. |
+| `InvalidRequestError: Tenbri is not initialized: call tenbri.init() first` (TypeScript: `call init() first`) | A run started before `init()`. | Call `init()` at startup, before the first run. |
+| Python: `UserError: Error running tool issue_refund: read-only: no stream key for tnb1:… in …/keys` | The intent could not be written (here the stream's keys are not in this keys directory), so the run stopped before the tool ran. | Set `TENBRI_KEYS` to the directory the stream was created with. Any write failure surfaces this way: check the `__cause__`. |
+| TypeScript: `ToolCallError: Failed to run function tools: NoSessionKeyError: read-only: no stream key for tnb1:… in …/keys` | The same, from the `tenbri` guardrail; `error.error` is the `TenbriError`. | The same. |
+| `UserError: Error running tool issue_refund: 'stripe:{charge_id}': no argument 'charge_id'` | The target names an argument the tool does not have. | Match the placeholder to the tool's parameters. |
+| `InvalidRequestError: tenbri.toml: actions.issue_refund: policy: expected ref@version` | A `policy` without its version, raised by `init()`. | Write `policy = "policy:refund@14"`. |
+| `tenbri: c2 approved, by nobody known: set TENBRI_APPROVER` (a warning) | `state.approve` with no approver configured: no approval entry is written. | Set `TENBRI_APPROVER`, or pass `approver`. |
+| `tenbri: not recorded, the action goes ahead (fail_open): …` (`failOpen` in TypeScript) | `fail_open` is on and the stream could not be written; the tool ran. | Fix the stream; the call is not in the record. |
+| `ImportError: …: pip install --pre tenbri-openai-agents` | `tenbri.instrument_openai_agents()` without the adapter installed. | Install it. |
+| `Error: already recorded by another TenbriRecorder` (TypeScript) | An agent or tool is instrumented twice, by two recorders. | Use one recorder per agent, or build fresh tools for a second one. |
+| An MCP tool has no entries (TypeScript) | Tools an agent gets at run time are not instrumented, and only function tools are recorded. | Wrap the call with [`decision()`](/docs/adapters/planned/#use-tenbri-from-any-framework-today). |
+| `broken at seq 1: untrusted_root: the genesis key is sha256:e3ed75b1…, not the pinned sha256:0edc8058…` | You verified against another stream's fingerprint (here a stream that was deleted and created again). | Pin the fingerprint printed when this stream was created. |
+
+A process that dies mid-tool leaves its intent open; the next writer of the stream records it as
+`unknown`.
+
+## What is written
+
+| What happens | Entry |
+| --- | --- |
+| A tool call | An `intent` by `agent:<name>`, action and target from the mapping, durable before the tool runs; then the outcome `ok`, or `error` if the tool raised or timed out |
+| A tool input guardrail rejects or trips, or `state.reject(item)` | An intent and the outcome `refused` (with the approver as `principal`, for a rejection) |
+| A handoff | An intent and an `ok` outcome, action `handoff`, target `agent:<next agent>` |
+| `state.approve(item)` | An `approval` entry by the approver; the tool's intent names it in `approval` |
+| The run raises (Python) | Open intents end in `error`, or `unknown` when the run was cancelled |
+
+Tool arguments, results and prompts are never written. Entries carry the SDK's trace id (span ids
+cut to 16 hex digits; the first 16 still find the span), so a decision and its trace find each
+other.
+
+Three entries of the approvals run above, as stored (signatures and hashes shortened). Alice's
+approval:
+
+```json
+{
+  "action": { "target": "stripe:ch_2", "type": "issue_refund" },
+  "id": "01M5D15XNMXP21ECFYM6BN779H",
+  "kind": "approval",
+  "prev": "sha256:d023ad86…",
+  "principal": { "id": "alice", "kind": "person" },
+  "seq": 5,
+  "sig": "ed25519:46695640…",
+  "signer": "sess:2026-10-20:de0b1447fc5d",
+  "stream": "tnb1:502da15a8bf59208dd9f204c0c80ff36",
+  "ts": "2026-10-20T16:09:14.679Z",
+  "v": 1
+}
+```
+
+Her rejection of the 500 EUR refund, an outcome by the person:
+
+```json
+{
+  "action": { "target": "stripe:ch_3", "type": "issue_refund" },
+  "id": "01M5D15XPY4RPQCV9D9NP8NN1B",
+  "intent": "01M5D15XP9KB5KHTEPJAZC5HTF",
+  "kind": "decision",
+  "phase": "outcome",
+  "prev": "sha256:5d578df6…",
+  "principal": { "id": "alice", "kind": "person" },
+  "seq": 7,
+  "sig": "ed25519:3bd3c7ad…",
+  "signer": "sess:2026-10-20:de0b1447fc5d",
+  "source": "sdk",
+  "status": "refused",
+  "stream": "tnb1:502da15a8bf59208dd9f204c0c80ff36",
+  "ts": "2026-10-20T16:09:14.721Z",
+  "v": 1
+}
+```
+
+And the intent of the refund she approved, which names her approval:
+
+```json
+{
+  "action": { "target": "stripe:ch_2", "type": "issue_refund" },
+  "approval": {
+    "by": { "id": "alice", "kind": "person" },
+    "entry": "sha256:b43b3b21…"
+  },
+  "durability": "local",
+  "id": "01M5D15XQRVY98ATHYJJCG9T9D",
+  "kind": "decision",
+  "phase": "intent",
+  "prev": "sha256:d94f901b…",
+  "principal": { "id": "support", "kind": "agent" },
+  "rule": { "ref": "policy:refund", "result": "allow", "version": "14" },
+  "seq": 8,
+  "sig": "ed25519:80e56073…",
+  "signer": "sess:2026-10-20:de0b1447fc5d",
+  "source": "sdk",
+  "stream": "tnb1:502da15a8bf59208dd9f204c0c80ff36",
+  "trace": { "span_id": "0acacb7b5cac4bb5", "trace_id": "52847858c4924eeda1f205b6fb35f8a8" },
+  "ts": "2026-10-20T16:09:14.747Z",
+  "v": 1
+}
+```
+
+See the [entry format](/docs/reference/entry-format/) for every field.
+
+## Advanced: lower-level API
+
+The instrumentation is built on `TenbriRecorder`, on a stream you opened yourself, with no default
+stream and no environment. Use it to hold several streams, or to record some runs and not others.
+It writes the same entries.
+
+<Tabs groupId="lang" persist items={["Python","TypeScript"]}>
+<Tab value="Python">
+
+```python title="recorder.py"
+import asyncio
+
+from agents import Agent, Runner, function_tool
+from tenbri import AsyncTenbri
+from tenbri_openai_agents import TenbriRecorder
+
+@function_tool
+def issue_refund(charge: str, amount: int) -> str:
+    """Refunds `amount` EUR on the card charge `charge`."""
+    return f"refunded {amount} EUR on {charge}"
+
+async def main():
+    log = await AsyncTenbri.open("./audit", create=True)
+    agent = Agent(name="support", instructions="You handle refunds.", tools=[issue_refund])
+    recorder = TenbriRecorder(log, target=lambda tool, args: f"stripe:{args['charge']}")
+    async with recorder:  # closes the intents a failed run leaves open
+        await Runner.run(agent, "Refund 20 EUR on ch_1.", hooks=recorder, run_config=recorder.run_config())
+    print([(m.entry["phase"], m.entry["action"]) for m in await log.query(action="issue_refund")])
+    await log.close()
+
+asyncio.run(main())
+```
+
+The SDK awaits its run hooks, so the intent is durable before the tool runs. Pass
+`run_config=recorder.run_config()`: it is how the recorder hears that a tool raised. Use one
+recorder per run, or per conversation when a run resumes after approvals, and answer with
+`await recorder.approve(state, item, "person:alice")` or `recorder.reject(...)`.
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts title="recorder.ts"
+import { Agent, run, tool } from '@openai/agents'
+import { Tenbri } from 'tenbri'
+import { TenbriRecorder } from '@tenbri/openai-agents'
+import { z } from 'zod'
+
+const issueRefund = tool({
+  name: 'issue_refund',
+  description: 'Refunds `amount` EUR on the card charge `charge`.',
+  parameters: z.object({ charge: z.string(), amount: z.number() }),
+  execute: async ({ charge, amount }) => `refunded ${amount} EUR on ${charge}`,
+})
+
+const log = await Tenbri.open('./audit', { create: true })
+const recorder = new TenbriRecorder(log, { target: (_tool, args) => `stripe:${args.charge}` })
+const agent = recorder.instrument(new Agent({ name: 'support', instructions: 'You handle refunds.', tools: [issueRefund] }))
+await run(agent, 'Refund 20 EUR on ch_1.')
+await recorder.flush() // outcomes are written in the background
+console.log((await log.query({ action: 'issue_refund' })).map((m) => [m.entry.phase, m.entry.action]))
+await log.close()
+```
+
+The JavaScript SDK does not wait for its run hooks, so `instrument` adds a tool input guardrail
+named `tenbri` to each recorded tool, after the tool's own guardrails: the SDK awaits it before the
+tool runs. Outcomes and handoffs are written in the background, in order; the next intent and
+`flush()` wait for them. Answer with `await recorder.approve(result.state, item, 'person:alice')`
+or `recorder.reject(...)`.
+
+</Tab>
+</Tabs>
+
+Both print the intent and the `ok` outcome of `issue_refund` on `stripe:ch_1`. `TenbriRecorder`
+takes `tools`, `action`, `target` and `inputs` (functions of the tool name and arguments),
+`describe` (any of `action`, `target`, `rule`, `subject` at once), `subject` and `fail_open`
+(`failOpen`). `recorder.read(ref, version, content)` (`read(ref, { version, content })`) pins what
+the agent read to the next decision, by keyed digest.
+
+<Callout type="info" title="Limits">
+In TypeScript, tools added at run time (MCP servers) are not instrumented and only function tools
+are recorded. In Python, a streamed run that raises leaves its open intents to the stream's next
+writer, which records them as `unknown`.
+</Callout>

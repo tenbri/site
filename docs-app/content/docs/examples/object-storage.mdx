@@ -1,0 +1,331 @@
+---
+title: Streams on object storage
+description: "Keep a stream in AWS S3, Cloudflare R2 or MinIO instead of a local directory, from the CLI, Python or TypeScript."
+---
+
+
+A stream can live under a bucket prefix instead of a local directory. Everything that takes a
+stream location (the CLI, `tenbrid`'s `path`, `init()` and `TENBRI_STREAM` in Python and Node,
+`Tenbri.open`) also takes `s3://bucket/<prefix>` or `r2://bucket/<prefix>`, with credentials from the same environment
+variables the providers' own tools read. You will run a stream on a local MinIO end to end, then
+see the variables for AWS S3 and Cloudflare R2.
+
+**Prerequisites:** Docker for MinIO, and one of: the `tenbri` CLI (its default `s3` feature is
+on), `pip install --pre tenbri`, or `npm install tenbri@next`
+([install](/docs/getting-started/install/)). The Python and Node packages include object storage.
+
+<Callout type="info" title="What was tested">
+The MinIO steps below were run for real, in all three languages. The AWS S3 and R2 commands were
+not run for this page: S3 support is tested on MinIO, and a test on real S3 comes before
+`0.1.0-rc.1`.
+</Callout>
+
+Keys never go to the bucket: they stay in `$TENBRI_KEYS` on the machine that writes.
+
+## MinIO
+
+### 1. Start MinIO and create a bucket
+
+```sh
+docker run -d --rm --name minio -p 9000:9000 \
+  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+  cgr.dev/chainguard/minio:latest server /data
+
+curl -s -o /dev/null -w "%{http_code}\n" -X PUT \
+  --user minioadmin:minioadmin --aws-sigv4 "aws:amz:us-east-1:s3" \
+  http://127.0.0.1:9000/audit-bucket
+```
+
+```text
+200
+```
+
+Any way of creating the bucket works (`mc mb`, the MinIO console); `curl --aws-sigv4` just avoids
+another tool.
+
+### 2. Point Tenbri at it
+
+MinIO speaks the S3 API, so use `s3://` with `AWS_ENDPOINT_URL`. `AWS_ALLOW_HTTP=true` is needed
+for a plain `http://` endpoint. The CLI, Python and Node read the same variables.
+
+```sh
+export AWS_ACCESS_KEY_ID=minioadmin
+export AWS_SECRET_ACCESS_KEY=minioadmin
+export AWS_REGION=us-east-1
+export AWS_ENDPOINT_URL=http://127.0.0.1:9000
+export AWS_ALLOW_HTTP=true
+export TENBRI_KEYS=./keys
+```
+
+### 3. Create the stream, record and verify
+
+<Tabs groupId="lang" persist items={["CLI","Python","TypeScript"]}>
+<Tab value="CLI">
+
+```sh
+tenbri init s3://audit-bucket/audit/billing
+```
+
+```text
+created stream tnb1:50ed3445051480ab807e90de536004cb at s3://audit-bucket/audit/billing
+stream key fingerprint (pin it): sha256:50ed3445051480ab807e90de536004cb301ccfeedf2d193ce0163fe2f38d1c93
+keys: ./keys/tnb1-50ed3445051480ab807e90de536004cb
+pinned in ./keys/pins: tenbri verify s3://audit-bucket/audit/billing uses it
+verify with: tenbri verify s3://audit-bucket/audit/billing --key sha256:50ed3445051480ab807e90de536004cb301ccfeedf2d193ce0163fe2f38d1c93
+```
+
+Record an intent, then its outcome:
+
+```sh
+echo '{"kind":"decision","phase":"intent","source":"sdk","principal":{"kind":"agent","id":"billing-agent"},"action":{"type":"issue_refund","target":"stripe:charge/ch_3PqX"}}' \
+  | tenbri append s3://audit-bucket/audit/billing
+```
+
+```text
+{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01M5CWSJ9JFPPDBPAV5EQMY6A3","kind":"decision","phase":"intent","prev":"sha256:32b00393…","principal":{"id":"billing-agent","kind":"agent"},"seq":3,"sig":"ed25519:fde3597d…","signer":"sess:2026-10-20:19226a107c57","source":"sdk","stream":"tnb1:50ed3445051480ab807e90de536004cb","ts":"2026-10-20T14:52:35.506Z","v":1}
+```
+
+```sh
+echo '{"kind":"decision","phase":"outcome","source":"sdk","intent":"01M5CWSJ9JFPPDBPAV5EQMY6A3","status":"ok","principal":{"kind":"agent","id":"billing-agent"},"action":{"type":"issue_refund","target":"stripe:charge/ch_3PqX"}}' \
+  | tenbri append s3://audit-bucket/audit/billing
+```
+
+```text
+{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01M5CWSRZQB4VBYV03VZ5B8R10","intent":"01M5CWSJ9JFPPDBPAV5EQMY6A3","kind":"decision","phase":"outcome","prev":"sha256:e529ff23…",…,"seq":4,…,"status":"ok",…}
+```
+
+```sh
+tenbri verify s3://audit-bucket/audit/billing \
+  --key sha256:50ed3445051480ab807e90de536004cb301ccfeedf2d193ce0163fe2f38d1c93
+```
+
+```text
+verified 4 entries, stream tnb1:50ed3445051480ab807e90de536004cb, pinned to sha256:50ed3445051480ab807e90de536004cb301ccfeedf2d193ce0163fe2f38d1c93
+```
+
+`init` refuses a prefix that already holds a stream:
+
+```text
+tenbri: s3://audit-bucket/audit/billing already holds a stream
+```
+
+</Tab>
+<Tab value="Python">
+
+```python title="billing.py"
+import tenbri
+
+# TENBRI_STREAM and TENBRI_AGENT say where and who. On first use, init() creates the stream under
+# the prefix; its keys stay in $TENBRI_KEYS on this machine.
+log = tenbri.init()
+pin = log.fingerprint
+print("stream", log.id, "pin this:", pin)
+
+# The intent is durable in the bucket before the function runs; the outcome follows.
+@tenbri.decision("issue_refund", target="stripe:charge/{charge}")
+def refund(charge: str) -> None:
+    print("refunding", charge)  # issue the refund here
+
+refund("ch_3PqX")
+
+report = log.verify(pin)
+print("verified:", report.ok, report.entries, "entries")
+```
+
+```sh
+export TENBRI_AGENT=agent:billing-agent
+TENBRI_STREAM=s3://audit-bucket/audit/billing-py python billing.py
+```
+
+```text
+stream tnb1:7203ad4c5da581f4185b9126406b9611 pin this: sha256:7203ad4c5da581f4185b9126406b96118e4a86c3bbf6c169c3b81c45b76dcefb
+refunding ch_3PqX
+verified: True 4 entries
+```
+
+`tenbri.init("s3://audit-bucket/audit/billing-py")` does the same without the variable. With
+asyncio, `log.aio` is the same stream as an `AsyncTenbri`, and `@tenbri.decision` records
+`async def` functions too.
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts title="billing.ts"
+import { decision, init } from 'tenbri'
+
+// TENBRI_STREAM and TENBRI_AGENT say where and who. On first use, init() creates the stream under
+// the prefix; its keys stay in $TENBRI_KEYS on this machine.
+const log = await init()
+const pin = log.fingerprint!
+console.log('stream', log.id, 'pin this:', pin)
+
+// The intent is durable in the bucket before the function runs; the outcome follows.
+const refund = decision({ action: 'issue_refund', target: 'stripe:charge/{0}' }, async (charge: string) => {
+  console.log('refunding', charge) // issue the refund here
+})
+
+await refund('ch_3PqX')
+
+const report = await log.verify(pin)
+console.log('verified:', report.ok, report.entries, 'entries')
+```
+
+```sh
+export TENBRI_AGENT=agent:billing-agent
+TENBRI_STREAM=s3://audit-bucket/audit/billing-ts node billing.ts
+```
+
+```text
+stream tnb1:54c9b6c18a44d0b3d4943d854cf8b423 pin this: sha256:54c9b6c18a44d0b3d4943d854cf8b423aafa00dd87a5d6e0f295e46c8f1c55ed
+refunding ch_3PqX
+verified: true 4 entries
+```
+
+`init({ stream: 's3://audit-bucket/audit/billing-ts' })` does the same without the variable.
+Node 22.18 and later run `.ts` files directly (with `"type": "module"` in `package.json`); on
+Node 20, use `npx tsx billing.ts`.
+
+</Tab>
+</Tabs>
+
+Each prefix holds the same layout as a local stream:
+
+```text
+audit/billing/HEAD
+audit/billing/batches/000000000001.jsonl
+audit/billing/batches/000000000002.jsonl
+audit/billing/batches/000000000003.jsonl
+audit/billing/batches/000000000004.jsonl
+```
+
+A stream written from Python or Node verifies with the CLI, and the other way round. On object
+storage, entries the SDKs write carry `"durability":"replicated"`.
+
+Stop MinIO when you are done:
+
+```sh
+docker stop minio
+```
+
+## AWS S3 (not run here)
+
+Leave out `AWS_ENDPOINT_URL` and `AWS_ALLOW_HTTP`; the other `AWS_*` variables work as usual.
+
+```sh
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_REGION=eu-west-1
+export TENBRI_KEYS=~/.config/tenbri/keys
+```
+
+<Tabs groupId="lang" persist items={["CLI","Python","TypeScript"]}>
+<Tab value="CLI">
+
+```sh
+tenbri init s3://my-audit-bucket/audit/billing
+tenbri verify s3://my-audit-bucket/audit/billing --key sha256:...
+```
+
+</Tab>
+<Tab value="Python">
+
+```sh
+export TENBRI_STREAM=s3://my-audit-bucket/audit/billing
+```
+
+```python
+import tenbri
+
+tenbri.init()  # or tenbri.init("s3://my-audit-bucket/audit/billing")
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```sh
+export TENBRI_STREAM=s3://my-audit-bucket/audit/billing
+```
+
+```ts
+import { init } from 'tenbri'
+
+init() // or init({ stream: 's3://my-audit-bucket/audit/billing' })
+```
+
+</Tab>
+</Tabs>
+
+## Cloudflare R2 (not run here)
+
+Use `r2://` with an R2 API token's key pair. Tenbri derives the endpoint from
+`CLOUDFLARE_ACCOUNT_ID` (`https://<account>.r2.cloudflarestorage.com`), or takes
+`AWS_ENDPOINT_URL` if you set it. The region is always `auto`.
+
+```sh
+export AWS_ACCESS_KEY_ID=...        # R2 API token access key id
+export AWS_SECRET_ACCESS_KEY=...    # R2 API token secret
+export CLOUDFLARE_ACCOUNT_ID=...
+export TENBRI_KEYS=~/.config/tenbri/keys
+```
+
+<Tabs groupId="lang" persist items={["CLI","Python","TypeScript"]}>
+<Tab value="CLI">
+
+```sh
+tenbri init r2://my-audit-bucket/audit/billing
+tenbri verify r2://my-audit-bucket/audit/billing --key sha256:...
+```
+
+</Tab>
+<Tab value="Python">
+
+```sh
+export TENBRI_STREAM=r2://my-audit-bucket/audit/billing
+```
+
+```python
+import tenbri
+
+tenbri.init()  # or tenbri.init("r2://my-audit-bucket/audit/billing")
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```sh
+export TENBRI_STREAM=r2://my-audit-bucket/audit/billing
+```
+
+```ts
+import { init } from 'tenbri'
+
+init() // or init({ stream: 'r2://my-audit-bucket/audit/billing' })
+```
+
+</Tab>
+</Tabs>
+
+Without `CLOUDFLARE_ACCOUNT_ID` or `AWS_ENDPOINT_URL`, Tenbri stops before any request (this
+output is real):
+
+```text
+tenbri: r2://audit-bucket/audit/billing: set CLOUDFLARE_ACCOUNT_ID (or AWS_ENDPOINT_URL) for R2
+```
+
+From Python, `tenbri.init()` (and `Tenbri.open`) raise the same message as a
+`StoreUnavailableError` (`TENBRI_STORE_UNAVAILABLE`); in Node, `init()` rejects with the same
+error class:
+
+```text
+tenbri.errors.StoreUnavailableError: r2://audit-bucket/audit/billing: set CLOUDFLARE_ACCOUNT_ID (or AWS_ENDPOINT_URL) for R2
+```
+
+## What happened
+
+Tenbri wrote the same batches and HEAD to the bucket that it writes to a local directory. Before
+using a bucket it runs a canary: a put-if-absent must succeed once and be refused the second time,
+and a compare-and-swap from a wrong ETag must fail; a store that cannot do this is refused. Those
+two operations are what fence concurrent writers, so no lock or lease is needed.
+
+Related: [Storage reference](/docs/reference/storage/) · [Streams and entries](/docs/concepts/streams-and-entries/) ·
+[Keys](/docs/concepts/keys/) · [CLI reference](/docs/reference/cli/)

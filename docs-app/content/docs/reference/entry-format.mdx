@@ -1,0 +1,202 @@
+---
+title: Entry format v1
+description: Every member of a format v1 entry, its type, when it is required, who fills it and the rules it follows.
+---
+
+
+<Callout type="warn" title="Provisional">
+Format v1 is provisional until the external cryptography review ends. Logs written by pre-releases
+are not covered by the compatibility promise. The normative text is
+[spec/format-v1.md](https://github.com/tenbri/tenbri/blob/main/spec/format-v1.md).
+</Callout>
+
+An entry is one JSON object, stored as its canonical bytes (RFC 8785) on one line. Concepts are in
+[Streams and entries](/docs/concepts/streams-and-entries/) and
+[Integrity](/docs/concepts/integrity/).
+
+## General rules
+
+- Any top-level member not listed below fails with `unknown_field`. Any other member inside the
+  nested objects fails with `invalid_field`.
+- An optional member that is `null` is the same as an absent one; writers omit it.
+- All strings named below (ids, refs, versions, types, targets, handles) must be non-empty. Arrays
+  may be empty. Values inside `ext` are free, within the canonical-bytes rules.
+- Numbers are integers only, between -(2^53 - 1) and 2^53 - 1.
+
+## Encodings
+
+| Value | Encoding |
+| --- | --- |
+| Hash | `sha256:` and 64 lowercase hex digits |
+| Public key | `ed25519:` and the 32-byte key (RFC 8032) as 64 lowercase hex digits |
+| Signature | `ed25519:` and the 64-byte signature as 128 lowercase hex digits |
+| Key fingerprint | `sha256:` and the lowercase hex SHA-256 of the 32-byte public key |
+| Stream id | `tnb1:` and the first 32 hex digits of the genesis stream key's fingerprint |
+| Entry id | A ULID: 26 characters of Crockford base32, uppercase, first character `0` to `7` |
+| Timestamp | `YYYY-MM-DDTHH:MM:SS.mmmZ`: UTC, exactly three fraction digits, a valid calendar date |
+| Key id | 1 to 128 characters from `A-Z a-z 0-9 . _ : -` |
+| Body address | `blob:ct-sha256:` and 64 lowercase hex digits |
+| Input digest | `hmac-sha256:` and 64 lowercase hex digits |
+
+Every encoding has exactly one spelling: uppercase hex, a lowercase ULID or a timestamp without its
+milliseconds is invalid.
+
+## Fields
+
+"Filled by" says who sets the member: the **writer** (the library, `tenbri append` or `tenbrid`)
+or the **caller** (the draft you send).
+
+| Field | Type | Required | Filled by | Description |
+| --- | --- | --- | --- | --- |
+| `v` | integer | always | writer | Format version, `1` |
+| `id` | string (entry id) | always | writer, or caller | Unique within the stream. The writer generates it when the draft has none; `tenbrid` takes it from the `Idempotency-Key`. |
+| `stream` | string (stream id) | always | writer | `tnb1:` id of the stream; also the checkpoint origin |
+| `seq` | integer | always | writer | Starts at 1, increases by exactly 1; at most 2^53 - 1 |
+| `ts` | string (timestamp) | always | writer, or caller | Time claimed by the writer, not proven |
+| `hlc` | object `{wall, count}` | no | caller | Hybrid logical clock: `wall` milliseconds since the Unix epoch, `count` a counter, both non-negative integers. Never decreases within a stream. |
+| `trace` | object `{trace_id, span_id}` | no | caller (`tenbrid`: from `traceparent`; the Rust writer with its `otel` feature: from the active span) | OpenTelemetry span active when the entry was written: 32 and 16 lowercase hex digits |
+| `durability` | string | no | caller (`tenbrid` fills intents) | Promise that applied when the intent was acknowledged |
+| `group` | string | no, only on `seq` 1 | caller | Stream group the lane belongs to (group keys reserved) |
+| `kind` | string | always | caller (`tenbrid` fills it per endpoint) | See [kinds](#rules-per-kind) |
+| `phase` | string | per kind | caller (`tenbrid` fills it per endpoint) | `intent` or `outcome` |
+| `intent` | string (entry id) | per kind | caller | The intent an outcome or reconcile closes |
+| `status` | string | per kind | caller | Result of an outcome or reconcile |
+| `source` | string | per kind | caller (`tenbrid` default: `sdk`) | Where the entry came from |
+| `degraded` | boolean | no | caller | `true` when written in fail-open mode |
+| `principal` | object `{kind, id}` | per kind | caller (`tenbrid`: the token's) | Whoever acted |
+| `action` | object `{type, target}` | per kind | caller | `type` the action type; `target` optional, a reference, possibly personal data |
+| `subject` | string | no | caller | Pseudonymous handle selecting the per-subject keys used for erasure ([Privacy](/docs/concepts/privacy/)) |
+| `inputs` | array of `{ref, version, digest}` | no | caller (the Python and TypeScript bindings: from a run's reads) | `ref` and `version` plaintext, `digest` an input digest (keyed) |
+| `rule` | object `{ref, version, result}` | no | caller | The rule that allowed or refused. Must be absent when `source` is `proxy` or `ingest`. |
+| `approval` | object `{by, entry}` | no | caller | `by` the approver (a principal object), `entry` the entry hash of an earlier `approval` entry in this stream |
+| `links` | array of `{stream, seq, hash, rel}` | no | caller | Entries in other streams; `rel` optional. Checked for shape only (following a link is reserved). |
+| `body` | string (body address) | no | caller | Address of the encrypted body, as `DataKeys::seal_body` in `tenbri-crypt` returns it ([Privacy](/docs/concepts/privacy/)) |
+| `attestations` | array of `{key, sig}` | no | caller | Extra signatures by the principal or an approver |
+| `ext` | object | no | caller | Experimental features. Hashed and signed like everything else; meaning may change while a feature is Experimental. |
+| `key` | object | per kind | writer | The key event of a `key` entry; see [key events](#key-events) |
+| `prev` | string (hash) | every `seq` but 1 | writer | Entry hash of the previous entry; absent on `seq` 1 |
+| `signer` | string (key id) | always | writer | Key that signed the entry |
+| `sig` | string (signature) | always | writer | Ed25519 over `tenbri/entry/v1`, `0x00`, and the canonical entry without `sig` |
+
+A draft sent to `tenbri append` or `tenbrid` that contains `v`, `stream`, `seq`, `prev`, `signer`
+or `sig` is refused with `invalid_field` (`` `<member>` is filled in by the writer``).
+
+## Allowed values
+
+| Member | Values |
+| --- | --- |
+| `kind` | `decision`, `approval`, `key`, `reconcile`, `note` |
+| `phase` | `intent`, `outcome` |
+| `status` | `ok`, `error`, `refused`, `unknown` |
+| `source` | `sdk`, `proxy`, `ingest` |
+| `durability` | `local`, `replicated`, `postgres` |
+| `principal.kind` | `agent`, `person`, `service` |
+| `links[].rel` | `cause`, `handoff`, `approval` |
+| `key.op` | `certify`, `rotate`, `revoke` |
+| `key.role` | `stream`, `session` |
+
+`rule.result` is a free, non-empty string.
+
+## Rules per kind
+
+| Kind | Requires | Forbids |
+| --- | --- | --- |
+| `decision`, phase `intent` | `phase`, `source`, `principal`, `action` | `intent`, `status`, `key`; `source: ingest` |
+| `decision`, phase `outcome` | `phase`, `source`, `principal`, `action`, `status`; `intent` unless `source` is `ingest` | `key`; `intent` when `source` is `ingest` |
+| `approval` | `principal` (the approver), `action` (what is approved) | `phase`, `intent`, `status`, `key` |
+| `key` | `key` | `phase`, `intent`, `status` |
+| `reconcile` | `intent`, `status: unknown` | `phase`, `key` |
+| `note` | nothing | `phase`, `intent`, `status`, `key` |
+
+Across the stream:
+
+- An outcome names an intent that appears earlier and has no outcome yet (`bad_intent`).
+- A reconcile names an earlier intent with neither an outcome nor a reconcile (`bad_intent`). An
+  outcome that arrives after a reconcile is still accepted and supersedes it.
+- Writers reconcile an intent with no outcome after 1 hour by default.
+- `approval.entry` names the entry hash of an earlier `approval` entry (`bad_approval`).
+- `key` and `reconcile` entries are written by `tenbri` and `tenbrid` themselves; `tenbrid` refuses
+  them in a draft.
+
+## Key events
+
+The `key` member of a `key` entry. Details in [Keys](/docs/concepts/keys/).
+
+| `op` | Members | Signed by | Effect |
+| --- | --- | --- | --- |
+| `certify` | `id`, `pub`, `role` (`stream` or `session`), `not_after` (sessions only) | The current stream key | Adds a key. `role: stream` only in the genesis entry, which the new key signs itself. |
+| `rotate` | `id`, `pub` | The current stream key | The new key becomes the current stream key |
+| `revoke` | `id`, `from` (a sequence number, at least 1) | The current stream key | Entries signed by key `id` at `from` or later fail with `key_revoked`, including earlier-written ones |
+
+Session keys are certified for 24 hours by default; an entry with a `ts` later than its session
+key's `not_after` fails with `key_expired`.
+
+## Attestations
+
+An attestation's `sig` is the Ed25519 signature of `key` over `tenbri/attestation/v1`, `0x00`, and
+the canonical entry without `seq`, `prev`, `signer`, `sig` and `attestations`. A principal or
+approver signs the draft (its `id`, `ts` and `stream` already set) before the writer places it.
+
+## Example
+
+The `intent` entry from
+[spec/vectors/entries.json](https://github.com/tenbri/tenbri/blob/main/spec/vectors/entries.json),
+pretty-printed here. Stored, it is one line with no whitespace.
+
+```json
+{
+  "action": {
+    "target": "zendesk:ticket/4821",
+    "type": "reply_ticket"
+  },
+  "body": "blob:ct-sha256:305531dcc50ebca31cf1d5b31e9fc76ed51f66b3b6dd5a030c6539ae6532f979",
+  "durability": "local",
+  "hlc": {
+    "count": 0,
+    "wall": 1791986533318
+  },
+  "id": "01M4XBH0Y60000000000000003",
+  "inputs": [
+    {
+      "digest": "hmac-sha256:80dadc04df5bae022b918452d942e5ee756e6cf3a7f8ac8f462c8f9a521ac847",
+      "ref": "policy:refund",
+      "version": "14"
+    },
+    {
+      "digest": "hmac-sha256:61eb70aa07259d108510291f2f6e0eb8f216dc1138c119b6ec3a122ab3f3c573",
+      "ref": "contract:acme-sante",
+      "version": "3"
+    }
+  ],
+  "kind": "decision",
+  "phase": "intent",
+  "prev": "sha256:3b75c4e724b4379a38fd76be9b9cee650516210c57a4236c624804cc6eaf72f0",
+  "principal": {
+    "id": "support-assistant",
+    "kind": "agent"
+  },
+  "rule": {
+    "ref": "grants:support-assistant",
+    "result": "allow",
+    "version": "7"
+  },
+  "seq": 3,
+  "sig": "ed25519:7bbb976272f395acd659aa26289b113761cf3af937c1609b64ca658d8494a0fc7cc46cb50177b79f64c932912e09b198df497d43fda6e393a2e6e70517f9eb0e",
+  "signer": "sess:a1",
+  "source": "sdk",
+  "stream": "tnb1:170241c12e8724974ea3b10fe536b7d8",
+  "subject": "subj_7f3c91d2",
+  "trace": {
+    "span_id": "00f067aa0ba902b7",
+    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"
+  },
+  "ts": "2026-10-14T14:02:13.318Z",
+  "v": 1
+}
+```
+
+The genesis entry of the same stream, as stored:
+
+```json
+{"id":"01M4XBGYZP0000000000000001","key":{"id":"stream:a","op":"certify","pub":"ed25519:26ea1e8cd907cac3977eecd8cee7fa3d13aa0303ce53ce7fe359c3ebf17c525d","role":"stream"},"kind":"key","seq":1,"sig":"ed25519:d2b825716f782a98b54cffca6c2996837d11d5c0a52324bf7f21d0bc8b05c8b0306a9684ba3878e3dc848493353914c836b9991a2bc3bba1f57e38981869c501","signer":"stream:a","stream":"tnb1:170241c12e8724974ea3b10fe536b7d8","ts":"2026-10-14T14:02:11.318Z","v":1}
+```

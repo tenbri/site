@@ -1,0 +1,449 @@
+---
+title: Review a policy change
+description: List every decision an agent made under the old version of a policy, with their outcomes.
+---
+
+
+Your refund policy moved from version 14 to version 15. Legal asks which refunds were decided under
+version 14, and how they ended. Each intent records the policy it read as an input (`policy:refund`
+at a version), so a query on that input lists them. You will record five decisions across both
+versions, list the ones under version 14, and join them to their outcomes.
+
+## Prerequisites
+
+<Tabs groupId="lang" persist items={["CLI","Python","TypeScript","REST"]}>
+<Tab value="CLI">
+
+The `tenbri` CLI, `jq` and `openssl`:
+
+```sh
+cargo install tenbri-cli --version 0.1.0-beta.2 --locked
+```
+
+</Tab>
+<Tab value="Python">
+
+Python 3.10 or later.
+
+```sh tab="pip" tab-group="py-pkg"
+pip install --pre tenbri
+```
+
+```sh tab="uv" tab-group="py-pkg"
+uv add --prerelease allow tenbri
+```
+
+```sh tab="poetry" tab-group="py-pkg"
+poetry add --allow-prereleases tenbri
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+Node 22.18 or later, which runs `.ts` files directly, in a project with `"type": "module"`
+(`npm pkg set type=module`).
+
+```sh tab="npm" tab-group="js-pkg"
+npm install tenbri@next
+```
+
+```sh tab="pnpm" tab-group="js-pkg"
+pnpm add tenbri@next
+```
+
+```sh tab="yarn" tab-group="js-pkg"
+yarn add tenbri@next
+```
+
+```sh tab="bun" tab-group="js-pkg"
+bun add tenbri@next
+```
+
+</Tab>
+<Tab value="REST">
+
+`curl`, `jq`, and a `tenbrid` serving the stream with a token for you
+([tenbrid over REST](/docs/examples/tenbrid-rest/) sets one up):
+
+```sh
+cargo install tenbri-server --version 0.1.0-beta.2 --locked
+```
+
+</Tab>
+</Tabs>
+
+In every terminal:
+
+```sh
+export TENBRI_KEYS=./keys
+export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
+```
+
+## Steps
+
+<Steps>
+
+<Step>
+
+### Record decisions under both versions
+
+Each decision is an intent that read `policy:refund` at a version, then its outcome: `ok` or
+`refused`.
+
+<Tabs groupId="lang" persist items={["CLI","Python","TypeScript","REST"]}>
+<Tab value="CLI">
+
+The `decide` helper writes an intent with the keyed digest of the policy text it read, then
+its outcome.
+
+```sh title="decide.sh"
+tenbri init audit/support > init.out
+PIN=$(sed -n 's/^stream key fingerprint (pin it): //p' init.out)
+
+decide() { # charge, policy version, status
+  digest="hmac-sha256:$(printf 'refund policy, version %s' "$2" \
+    | openssl dgst -sha256 -hmac "$TENBRI_DIGEST_KEY" -r | cut -d' ' -f1)"
+  id=$(tenbri append audit/support <<EOF | jq -r .id
+{"kind":"decision","phase":"intent","source":"sdk",
+ "principal":{"kind":"agent","id":"support-assistant"},
+ "action":{"type":"issue_refund","target":"stripe:charge/$1"},
+ "inputs":[{"ref":"policy:refund","version":"$2","digest":"$digest"}]}
+EOF
+)
+  tenbri append audit/support <<EOF > /dev/null
+{"kind":"decision","phase":"outcome","source":"sdk","intent":"$id","status":"$3",
+ "principal":{"kind":"agent","id":"support-assistant"},
+ "action":{"type":"issue_refund","target":"stripe:charge/$1"}}
+EOF
+}
+
+decide ch_1001 14 ok
+decide ch_1002 14 refused
+decide ch_1003 15 ok
+decide ch_1004 14 ok
+decide ch_1005 15 refused
+```
+
+```sh
+source decide.sh
+```
+
+</Tab>
+<Tab value="Python">
+
+`tenbri.init()` opens the stream, creating it and its keys on first use. Each call of a
+`@tenbri.decision` function is an intent, then its outcome: raising `tenbri.Refused` records
+`refused`. `inputs` is a function of the arguments here, so each call pins the policy version it
+read, with the keyed digest of its text.
+
+```python title="decide.py"
+import os
+
+import tenbri
+
+DECISIONS = [  # charge, policy version, status
+    ("ch_1001", "14", "ok"),
+    ("ch_1002", "14", "refused"),
+    ("ch_1003", "15", "ok"),
+    ("ch_1004", "14", "ok"),
+    ("ch_1005", "15", "refused"),
+]
+
+log = tenbri.init(
+    "./audit/support",
+    agent="agent:support-assistant",
+    digest_key=os.environ["TENBRI_DIGEST_KEY"].encode(),
+)
+print("pin this:", log.fingerprint)
+
+# inputs, a function of the arguments: the policy version this call read, with its text.
+@tenbri.decision(
+    "issue_refund",
+    target="stripe:charge/{charge}",
+    inputs=lambda charge, version, status: [
+        ("policy:refund", version, f"refund policy, version {version}")
+    ],
+)
+def refund(charge: str, version: str, status: str) -> None:
+    if status == "refused":
+        raise tenbri.Refused(f"policy {version} says no")  # recorded as refused
+
+for charge, version, status in DECISIONS:
+    try:
+        refund(charge, version, status)
+    except tenbri.Refused:
+        pass
+```
+
+```sh
+python decide.py
+```
+
+```text
+pin this: sha256:62bfba6e631a2fa09c574a6a3eb6a38e006103475082350d5328ebed9e1607dd
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+`init()` opens the stream, creating it and its keys on first use. Each call of a `decision`
+function is an intent, then its outcome: throwing `Refused` records `refused`. `inputs` is a
+function of the arguments here, so each call pins the policy version it read, with the keyed
+digest of its text. `{charge}` in `target` reads the first argument's `charge`.
+
+```ts title="decide.ts"
+import { Refused, decision, init } from 'tenbri'
+
+const decisions = [ // charge, policy version, status
+  ['ch_1001', '14', 'ok'],
+  ['ch_1002', '14', 'refused'],
+  ['ch_1003', '15', 'ok'],
+  ['ch_1004', '14', 'ok'],
+  ['ch_1005', '15', 'refused'],
+]
+
+const log = await init({
+  stream: './audit/support',
+  agent: 'agent:support-assistant',
+  digestKey: process.env.TENBRI_DIGEST_KEY!,
+})
+console.log('pin this:', log.fingerprint)
+
+type Refund = { charge: string; version: string; status: string }
+
+const refund = decision(
+  {
+    action: 'issue_refund',
+    target: 'stripe:charge/{charge}',
+    // inputs, a function of the arguments: the policy version this call read, with its text.
+    inputs: ({ version }: Refund) => [
+      { ref: 'policy:refund', version, content: `refund policy, version ${version}` },
+    ],
+  },
+  async ({ version, status }: Refund) => {
+    if (status === 'refused') throw new Refused(`policy ${version} says no`) // recorded as refused
+  },
+)
+
+for (const [charge, version, status] of decisions) {
+  try {
+    await refund({ charge, version, status })
+  } catch (e) {
+    if (!(e instanceof Refused)) throw e
+  }
+}
+```
+
+```sh
+node decide.ts
+```
+
+```text
+pin this: sha256:e96ad7db8d07330339611d4e41fd0ca8f6d83b9ada71337b887345d282a3690f
+```
+
+</Tab>
+<Tab value="REST">
+
+Write the decisions with any of the other tabs, or with `POST /v1/streams/support/intents`
+and `/outcomes` as in [tenbrid over REST](/docs/examples/tenbrid-rest/). Then serve the
+stream:
+
+```sh
+tenbrid --config tenbrid.toml
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+### List the decisions under version 14, and join them to their outcomes
+
+The input filter is `ref@version`. The inputs are on the intents; each outcome names its
+intent by `id`, so read every `issue_refund` entry once and join on it.
+
+<Tabs groupId="lang" persist items={["CLI","Python","TypeScript","REST"]}>
+<Tab value="CLI">
+
+Piped, `query` prints one JSON object per line: the entry, its `seq`, its entry `hash`, its
+`verification`, and `as_of` (what the answer is current to). With `--key`, every row is checked
+against the pinned fingerprint (JSON output never uses the pin `tenbri init` recorded): without
+a query index, `query` verifies the whole stream.
+
+```sh
+tenbri query audit/support --input policy:refund@14 --key $PIN \
+  | jq -c '{seq, id: .entry.id, target: .entry.action.target, verification}'
+```
+
+```text
+{"seq":3,"id":"01M5D12A7P8KTKMM7HE8N4GK9F","target":"stripe:charge/ch_1001","verification":"verified"}
+{"seq":5,"id":"01M5D12A9K9SM2N2PCB2MXDP3X","target":"stripe:charge/ch_1002","verification":"verified"}
+{"seq":9,"id":"01M5D12AD2C0CD11Y6VB3G061W","target":"stripe:charge/ch_1004","verification":"verified"}
+```
+
+Count per version. A bare ref, `--input policy:refund`, matches any version:
+
+```sh
+tenbri query audit/support --input policy:refund@14 --key $PIN | jq -s length
+tenbri query audit/support --input policy:refund@15 --key $PIN | jq -s length
+tenbri query audit/support --input policy:refund --key $PIN | jq -s length
+```
+
+```text
+3
+2
+5
+```
+
+Join to the outcomes:
+
+```sh
+tenbri query audit/support --action issue_refund --key $PIN | jq -s -c '
+  map(.entry) as $all
+  | $all[] | select(.phase == "intent" and any(.inputs[]?; .ref == "policy:refund" and .version == "14")) as $i
+  | $all[] | select(.intent == $i.id)
+  | {target: .action.target, status}'
+```
+
+```text
+{"target":"stripe:charge/ch_1001","status":"ok"}
+{"target":"stripe:charge/ch_1002","status":"refused"}
+{"target":"stripe:charge/ch_1004","status":"ok"}
+```
+
+`--status refused` lists only the refused outcomes, across both versions.
+
+</Tab>
+<Tab value="Python">
+
+`inputs` takes `"ref@version"` strings or `(ref, version)` pairs; several must all match.
+
+```python title="review.py"
+import os
+
+from tenbri import Tenbri
+
+with Tenbri.open("./audit/support", key=os.environ["PIN"]) as log:
+    intents = log.query(inputs=["policy:refund@14"])
+    print(len(intents), "decisions read policy:refund at version 14")
+
+    outcomes = {
+        m.entry["intent"]: m.entry
+        for m in log.query(action="issue_refund")
+        if m.entry.get("phase") == "outcome"
+    }
+    for m in intents:
+        intent = m.entry
+        print(m.verification, intent["seq"], intent["action"]["target"], outcomes[intent["id"]]["status"])
+```
+
+```sh
+PIN=sha256:62bfba6e631a2fa09c574a6a3eb6a38e006103475082350d5328ebed9e1607dd python review.py
+```
+
+```text
+3 decisions read policy:refund at version 14
+verified 3 stripe:charge/ch_1001 ok
+verified 5 stripe:charge/ch_1002 refused
+verified 9 stripe:charge/ch_1004 ok
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+`inputs` takes `'ref@version'` strings or `[ref, version]` pairs; several must all match.
+
+```ts title="review.ts"
+import { Tenbri } from 'tenbri'
+
+const log = await Tenbri.open('./audit/support', { key: process.env.PIN! })
+const intents = await log.query({ inputs: ['policy:refund@14'] })
+console.log(intents.length, 'decisions read policy:refund at version 14')
+
+const outcomes = new Map(
+  (await log.query({ action: 'issue_refund' }))
+    .filter((m) => m.entry.phase === 'outcome')
+    .map((m) => [m.entry.intent, m.entry]),
+)
+for (const { verification, entry: intent } of intents) {
+  console.log(verification, intent.seq, intent.action?.target, outcomes.get(intent.id)?.status)
+}
+await log.close()
+```
+
+```sh
+PIN=sha256:e96ad7db8d07330339611d4e41fd0ca8f6d83b9ada71337b887345d282a3690f node review.ts
+```
+
+```text
+3 decisions read policy:refund at version 14
+verified 3 stripe:charge/ch_1001 ok
+verified 5 stripe:charge/ch_1002 refused
+verified 9 stripe:charge/ch_1004 ok
+```
+
+</Tab>
+<Tab value="REST">
+
+`GET /entries` takes the same filters as query parameters (`input`, `action`, `status`,
+`after_seq`, `limit` and more). A bare `input=policy:refund` matches any version.
+
+```sh
+export TENBRI_URL=http://127.0.0.1:7070
+export TOKEN=tnbt_…   # your token
+curl -s "$TENBRI_URL/v1/streams/support/entries?input=policy:refund@14" \
+  -H "Authorization: Bearer $TOKEN" \
+  | jq -c '.entries[] | {seq, id: .entry.id, target: .entry.action.target, verification}'
+```
+
+```text
+{"seq":3,"id":"01M5D12A7P8KTKMM7HE8N4GK9F","target":"stripe:charge/ch_1001","verification":"verified"}
+{"seq":5,"id":"01M5D12A9K9SM2N2PCB2MXDP3X","target":"stripe:charge/ch_1002","verification":"verified"}
+{"seq":9,"id":"01M5D12AD2C0CD11Y6VB3G061W","target":"stripe:charge/ch_1004","verification":"verified"}
+```
+
+Join to the outcomes:
+
+```sh
+curl -s "$TENBRI_URL/v1/streams/support/entries?action=issue_refund" \
+  -H "Authorization: Bearer $TOKEN" | jq -c '
+  [.entries[].entry] as $all
+  | $all[] | select(.phase == "intent" and any(.inputs[]?; .ref == "policy:refund" and .version == "14")) as $i
+  | $all[] | select(.intent == $i.id)
+  | {target: .action.target, status}'
+```
+
+```text
+{"target":"stripe:charge/ch_1001","status":"ok"}
+{"target":"stripe:charge/ch_1002","status":"refused"}
+{"target":"stripe:charge/ch_1004","status":"ok"}
+```
+
+A response holds up to 100 entries by default (`limit`, at most 1000); when more match,
+pass its `next_after_seq` as `after_seq` for the next page.
+
+</Tab>
+</Tabs>
+
+</Step>
+
+</Steps>
+
+## What happened
+
+Each intent recorded the exact policy version it read, with a keyed digest of its text, inside a
+signed entry, so the list cannot be edited after the fact without failing verification. The query
+matched `ref` and `version` exactly, and every row was checked against the pinned fingerprint. The
+digest also lets you prove later which policy text the agent saw, if you keep the text and the
+digest key.
+
+## Related
+
+- [Streams and entries](/docs/concepts/streams-and-entries/)
+- [Entry format](/docs/reference/entry-format/)
+- [CLI reference](/docs/reference/cli/)
+- [API reference](/docs/reference/api/)
+- [Adapters](/docs/adapters/): the Claude Agent SDK, OpenAI Agents SDK and LangGraph adapters record each tool call as a decision for you.

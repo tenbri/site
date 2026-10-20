@@ -1,0 +1,547 @@
+---
+title: Quickstart
+description: "Record your first decisions in five minutes: tenbri.init() and a decorated function in Python or TypeScript, or the CLI alone, then tail, show and verify the stream."
+---
+
+
+Two lines turn a function into a recorded decision: `init()` opens a stream, and `decision`
+wraps the function that acts. Each call writes a signed **intent** before the function runs and
+an **outcome** after it: `ok`, `refused` or `error`. Then the `tenbri` CLI tails the stream, shows
+one decision and verifies it against its pinned key. Install the package you pick, and the CLI to
+create the stream and check the result ([Install](/docs/getting-started/install/)).
+
+The outputs below come from real runs on macOS. Your ids, keys, hashes, signatures and timestamps
+will differ. Long values are shortened with `…`.
+
+## Set up
+
+`init()` reads its settings from the environment, so the code stays the same from your laptop to
+production:
+
+```sh
+mkdir tenbri-demo && cd tenbri-demo
+export TENBRI_STREAM=$PWD/audit/support       # where the stream lives
+export TENBRI_KEYS=$PWD/keys                  # its signing keys, apart from the stream
+export TENBRI_AGENT=agent:support-assistant   # who acts, when the code does not say
+```
+
+| Variable | What it sets | Default |
+| --- | --- | --- |
+| `TENBRI_STREAM` | The stream: a directory, `file://...`, `s3://bucket/prefix` or `r2://bucket/prefix` | none: `init()` fails without it or a `stream` argument |
+| `TENBRI_KEYS` | The keys directory, apart from the stream | `~/.config/tenbri/keys` |
+| `TENBRI_AGENT` | Who acts when nothing narrower says: `agent:support` | none: a decision with no principal fails |
+| `TENBRI_APPROVER` | Who answers the agent frameworks' approval prompts: `person:alice` | none |
+| `TENBRI_SCHEMA` | The [action schemas](/docs/examples/schemas-in-ci/) | `./tenbri.toml` when there is one |
+
+Arguments to `init()` win over the variables. The CLI reads `TENBRI_KEYS` too, and takes the
+stream as an argument or, when you leave it out, from `TENBRI_STREAM`.
+
+Create the stream with the CLI:
+
+```sh
+tenbri init
+```
+
+```text
+created stream tnb1:d25eb6e105ed964963112ac111b7286a at /…/tenbri-demo/audit/support
+stream key fingerprint (pin it): sha256:d25eb6e105ed964963112ac111b7286a7cf6e31a8adf9fe8bb3a6bca45803161
+keys: /…/tenbri-demo/keys/tnb1-d25eb6e105ed964963112ac111b7286a
+pinned in /…/tenbri-demo/keys/pins: tenbri verify /…/tenbri-demo/audit/support uses it
+verify with: tenbri verify /…/tenbri-demo/audit/support --key sha256:d25eb6e105ed964963112ac111b7286a7cf6e31a8adf9fe8bb3a6bca45803161
+```
+
+The directory must be new or empty. The fingerprint is the stream's trust root. `tenbri init`
+records it on this machine, in `keys/pins`, so `tenbri verify` here needs no `--key`. Anyone
+else, such as an auditor checking the stream on their own machine, has no such record: give them
+the fingerprint through a channel the stream's operator cannot change, and they pass it with
+`--key` (the `verify with` line).
+
+<Callout type="info">
+`init()` in Python or TypeScript also creates the stream and its keys when it does not exist yet,
+but records no pin: `tenbri verify` then exits 3 and prints the `--key` command to run. Creating it
+with `tenbri init` first is what lets the CLI verify it here without `--key`.
+</Callout>
+
+## Record a decision
+
+<Tabs groupId="lang" persist items={["CLI","Python","TypeScript"]}>
+<Tab value="CLI">
+
+No code: the CLI writes the same entries with `tenbri append`, one JSON entry per call, to the
+stream you created above. If you ran the Python or TypeScript tab, start again from
+[Set up](#set-up) in a fresh directory. `tenbri append --help` shows a working intent and outcome,
+and the allowed value of every enumerated field.
+
+<Steps>
+
+<Step>
+
+### Record an intent
+
+`tenbri append` reads one entry as JSON on stdin. An intent is written before the action runs:
+
+```sh
+tenbri append audit/support <<'EOF'
+{"kind":"decision","phase":"intent","source":"sdk",
+ "principal":{"kind":"agent","id":"support-assistant"},
+ "action":{"type":"refund","target":"order:8812"},
+ "inputs":[{"ref":"policy:refund","version":"14",
+            "digest":"hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa"}],
+ "rule":{"ref":"refund.max_amount","version":"14","result":"allow"}}
+EOF
+```
+
+It prints the entry as stored, in canonical form (one line, keys sorted):
+
+```json
+{"action":{"target":"order:8812","type":"refund"},"id":"01M5D3QMCJKJTDBVQVA8R1VTD2","inputs":[{"digest":"hmac-sha256:9f2c41aa…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent","prev":"sha256:7b9d8b10…","principal":{"id":"support-assistant","kind":"agent"},"rule":{"ref":"refund.max_amount","result":"allow","version":"14"},"seq":3,"sig":"ed25519:f6ef1dce…","signer":"sess:2026-10-20:632040addff7","source":"sdk","stream":"tnb1:5cdc63b0d49acd8b2975d36e4cd9753c","ts":"2026-10-20T16:53:52.146Z","v":1}
+```
+
+The writer fills in `v`, `id`, `stream`, `seq`, `ts`, `prev`, `signer` and `sig`. You may
+give `id` and `ts` yourself; giving the others is an error, followed by the allowed values of
+every enumerated field:
+
+```text
+tenbri: stdin: invalid_field: `seq` is filled in by the writer
+allowed values:
+  kind            decision, approval, key, reconcile, note
+  phase           intent, outcome (decision entries only)
+  source          sdk, proxy, ingest
+  status          ok, error, refused, unknown (outcomes and reconciles)
+  principal.kind  agent, person, service
+  durability      local, replicated, postgres
+  links[].rel     cause, handoff, approval
+an example: tenbri append --help
+```
+
+Note the entry's `id`. The outcome names it.
+
+</Step>
+
+<Step>
+
+### Record its outcome
+
+```sh
+tenbri append audit/support <<'EOF'
+{"kind":"decision","phase":"outcome","source":"sdk",
+ "intent":"01M5D3QMCJKJTDBVQVA8R1VTD2","status":"ok",
+ "principal":{"kind":"agent","id":"support-assistant"},
+ "action":{"type":"refund","target":"order:8812"}}
+EOF
+```
+
+```json
+{"action":{"target":"order:8812","type":"refund"},"id":"01M5D3QMDQZQN14YZHRPE2S9TG","intent":"01M5D3QMCJKJTDBVQVA8R1VTD2","kind":"decision","phase":"outcome","prev":"sha256:0b33f14b…","principal":{"id":"support-assistant","kind":"agent"},"seq":4,"sig":"ed25519:c8ffd2bc…","signer":"sess:2026-10-20:632040addff7","source":"sdk","status":"ok","stream":"tnb1:5cdc63b0d49acd8b2975d36e4cd9753c","ts":"2026-10-20T16:53:52.183Z","v":1}
+```
+
+An intent takes exactly one outcome. A second one for the same intent fails, writes nothing
+and exits 2:
+
+```text
+tenbri: entry rejected: bad_intent: no open intent 01M5D3QMCJKJTDBVQVA8R1VTD2
+```
+
+</Step>
+
+<Step>
+
+### Verify
+
+```sh
+tenbri verify audit/support
+```
+
+```text
+verified 4 entries, stream tnb1:5cdc63b0d49acd8b2975d36e4cd9753c, pinned to sha256:5cdc63b0d49acd8b2975d36e4cd9753c81974d47cc3165f91c23f3db2bbed016 (the pin recorded in /…/tenbri-demo/keys/pins)
+```
+
+The exit code is 0: `verify` checked the stream against the fingerprint `tenbri init` recorded.
+On a machine without that record, pass it: `tenbri verify audit/support --key sha256:5cdc63b0…`.
+
+</Step>
+
+<Step>
+
+### Query by input
+
+Find every entry that used version 14 of the refund policy:
+
+```sh
+tenbri query audit/support --input policy:refund@14
+```
+
+```text
+     3  2026-10-20T16:53:52.146Z  decision intent   agent:support-assistant  refund order:8812                -        verified
+```
+
+On a terminal, each match is one line: seq, time, kind and phase, principal, action, status and
+verification. `--action refund` selects by action type and matches both entries. Repeat
+`--input` to require several.
+
+Piped, `query` prints one JSON object per match instead: the entry, its `verification`, its
+hash, and `as_of`, the head of the stream the answer was read from. JSON output uses only
+`--key`, never the recorded pin, so pass it in scripts:
+
+```sh
+tenbri query audit/support --action refund --key sha256:5cdc63b0… | jq -c '{seq, verification, phase: .entry.phase, status: .entry.status}'
+```
+
+```text
+{"seq":3,"verification":"verified","phase":"intent","status":null}
+{"seq":4,"verification":"verified","phase":"outcome","status":"ok"}
+```
+
+</Step>
+
+<Step>
+
+### Tail the stream
+
+```sh
+tenbri tail audit/support -n 2 --no-follow
+```
+
+```text
+     3  2026-10-20T16:53:52.146Z  decision intent   agent:support-assistant  refund order:8812                -        verified
+     4  2026-10-20T16:53:52.183Z  decision outcome  agent:support-assistant  refund order:8812                ok       verified
+```
+
+Without `--no-follow`, `tail` keeps running and prints new entries as they are written. The two
+key entries `init` wrote (seq 1 and 2) are hidden; `--all` shows them.
+
+</Step>
+
+<Step>
+
+### Show one decision
+
+```sh
+tenbri show audit/support 3
+```
+
+```text
+seq 3  decision intent  01M5D3QMCJKJTDBVQVA8R1VTD2
+  ts           2026-10-20T16:53:52.146Z
+  hash         sha256:0b33f14b7a22d2a2f3d5545d07196b45d4f95078d5a6856359fb6a2e88b8bfa4
+  action       refund order:8812
+  inputs       [{"digest":"hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa","ref":"policy:refund","version":"14"}]
+  principal    agent:support-assistant
+  rule         {"ref":"refund.max_amount","result":"allow","version":"14"}
+  signer       sess:2026-10-20:632040addff7
+  source       sdk
+  verification verified, pinned to sha256:5cdc63b0d49acd8b2975d36e4cd9753c81974d47cc3165f91c23f3db2bbed016 (recorded in /…/tenbri-demo/keys/pins)
+
+chain:
+>     3  2026-10-20T16:53:52.146Z  decision intent   agent:support-assistant  refund order:8812                -        verified
+      4  2026-10-20T16:53:52.183Z  decision outcome  agent:support-assistant  refund order:8812                ok       verified
+```
+
+`show` takes a sequence number or an id, and prints the entry's fields, the intent and outcome
+it is linked to, and whether the stream verifies.
+
+</Step>
+
+</Steps>
+
+</Tab>
+<Tab value="Python">
+
+Needs `pip install --pre tenbri` (Python 3.10 or later).
+
+```python title="quickstart.py"
+import tenbri
+
+log = tenbri.init()  # the stream, its keys and the agent come from TENBRI_*
+print("pin this:", log.fingerprint)
+
+@tenbri.decision("issue_refund", target="stripe:{charge}", policy="policy:refund@14")
+def refund(charge: str, amount: int) -> str:
+    if amount > 500:
+        raise tenbri.Refused("over the 500 EUR ceiling")  # recorded as refused
+    if amount <= 0:
+        raise ValueError("nothing to refund")  # recorded as error, and raised
+    return "re_123"  # call the payment API here
+
+print("ok:", refund("ch_3PqX", 20))
+
+try:
+    refund("ch_9ZzY", 900)
+except tenbri.Refused as e:
+    print("refused:", e)
+
+try:
+    refund("ch_0", 0)
+except ValueError as e:
+    print("error:", e)
+```
+
+```sh
+python quickstart.py
+```
+
+```text
+pin this: sha256:d25eb6e105ed964963112ac111b7286a7cf6e31a8adf9fe8bb3a6bca45803161
+ok: re_123
+refused: over the 500 EUR ceiling
+error: nothing to refund
+```
+
+- `init()` opens the stream `tenbri init` created (or creates it and its keys if there is none
+  yet), and flushes and closes it at exit. `with tenbri.init(...):` scopes it to a block.
+- The intent is durable before `refund` runs. If it cannot be written, `refund` does not run
+  (fail closed), unless `init(fail_open=True)`.
+- `target` is a template of the arguments: `stripe:{charge}` becomes `stripe:ch_3PqX`. `policy`
+  (`ref@version`) is recorded as the rule that allowed the action.
+- Who acts: `principal=` on the decorator, else the innermost `with tenbri.agent("agent:billing"):`,
+  else `TENBRI_AGENT`. With none, the call raises: Tenbri never guesses.
+- `async def` functions work the same way; a cancelled call records `unknown`.
+
+</Tab>
+<Tab value="TypeScript">
+
+Needs `npm install tenbri@next` (Node 20 or later). Node 22.18 and later run TypeScript files
+directly; on Node 20, run `npx tsx quickstart.ts`.
+
+```sh
+npm pkg set type=module
+```
+
+```ts title="quickstart.ts"
+import { Refused, decision, init } from 'tenbri'
+
+const log = await init() // the stream, its keys and the agent come from TENBRI_*
+console.log('pin this:', log.fingerprint)
+
+const refund = decision(
+  { action: 'issue_refund', target: 'stripe:{charge}', policy: 'policy:refund@14' },
+  async ({ charge, amount }: { charge: string; amount: number }) => {
+    if (amount > 500) throw new Refused('over the 500 EUR ceiling') // recorded as refused
+    if (amount <= 0) throw new RangeError('nothing to refund') // recorded as error, and rethrown
+    return 're_123' // call the payment API here
+  },
+)
+
+console.log('ok:', await refund({ charge: 'ch_3PqX', amount: 20 }))
+
+try {
+  await refund({ charge: 'ch_9ZzY', amount: 900 })
+} catch (e) {
+  if (!(e instanceof Refused)) throw e
+  console.log('refused:', e.message)
+}
+
+try {
+  await refund({ charge: 'ch_0', amount: 0 })
+} catch (e) {
+  if (!(e instanceof RangeError)) throw e
+  console.log('error:', e.message)
+}
+```
+
+```sh
+node quickstart.ts
+```
+
+```text
+pin this: sha256:a8d69820434ab0a5f1b02798a45b75c22e5f34d190b23d28709c907e82fe4bb7
+ok: re_123
+refused: over the 500 EUR ceiling
+error: nothing to refund
+```
+
+- `init()` opens the stream `tenbri init` created (or creates it and its keys if there is none
+  yet), and flushes and closes it before the process exits. Awaiting it is optional: a decision waits for it.
+  `await using log = await init(...)` scopes it to a block.
+- The intent is durable before the function runs. If it cannot be written, the function does not
+  run (fail closed), unless `init({ failOpen: true })`.
+- `target` is a template of the arguments: `stripe:{charge}` reads the first argument's `charge`,
+  `{1}` is the second argument. `policy` (`ref@version`) is recorded as the rule that allowed the
+  action.
+- Who acts: `principal` in the options, else the innermost `agent('agent:billing', () => ...)`,
+  else `TENBRI_AGENT`. With none, the call rejects: Tenbri never guesses.
+- An `AbortError` records `unknown`.
+
+</Tab>
+</Tabs>
+
+## Check it from the CLI
+
+Whichever way you wrote the stream, the CLI reads it. Each call is two entries, its intent and its
+outcome:
+
+```sh
+tenbri tail audit/support -n 6 --no-follow
+```
+
+```text
+     3  2026-10-20T16:53:39.983Z  decision intent   agent:support-assistant  issue_refund stripe:ch_3PqX      -        verified
+     4  2026-10-20T16:53:40.001Z  decision outcome  agent:support-assistant  issue_refund stripe:ch_3PqX      ok       verified
+     5  2026-10-20T16:53:40.018Z  decision intent   agent:support-assistant  issue_refund stripe:ch_9ZzY      -        verified
+     6  2026-10-20T16:53:40.039Z  decision outcome  agent:support-assistant  issue_refund stripe:ch_9ZzY      refused  verified
+     7  2026-10-20T16:53:40.060Z  decision intent   agent:support-assistant  issue_refund stripe:ch_0         -        verified
+     8  2026-10-20T16:53:40.079Z  decision outcome  agent:support-assistant  issue_refund stripe:ch_0         error    verified
+```
+
+Without `--no-follow`, `tail` keeps running and prints new entries as they are written. Piped,
+`tail` prints each entry as JSON, for `jq`:
+
+```sh
+tenbri tail audit/support -n 6 --no-follow | jq -c '{seq, phase, status, action: .action.type, target: .action.target, rule: .rule.ref}'
+```
+
+```text
+{"seq":3,"phase":"intent","status":null,"action":"issue_refund","target":"stripe:ch_3PqX","rule":"policy:refund"}
+{"seq":4,"phase":"outcome","status":"ok","action":"issue_refund","target":"stripe:ch_3PqX","rule":null}
+{"seq":5,"phase":"intent","status":null,"action":"issue_refund","target":"stripe:ch_9ZzY","rule":"policy:refund"}
+{"seq":6,"phase":"outcome","status":"refused","action":"issue_refund","target":"stripe:ch_9ZzY","rule":null}
+{"seq":7,"phase":"intent","status":null,"action":"issue_refund","target":"stripe:ch_0","rule":"policy:refund"}
+{"seq":8,"phase":"outcome","status":"error","action":"issue_refund","target":"stripe:ch_0","rule":null}
+```
+
+Verify the stream:
+
+```sh
+tenbri verify audit/support
+```
+
+```text
+verified 8 entries, stream tnb1:d25eb6e105ed964963112ac111b7286a, pinned to sha256:d25eb6e105ed964963112ac111b7286a7cf6e31a8adf9fe8bb3a6bca45803161 (the pin recorded in /…/tenbri-demo/keys/pins)
+```
+
+The exit code is 0. `verify` used the pin `tenbri init` recorded; it is the fingerprint the
+program printed. An auditor on another machine passes it with `--key`. With neither, `verify` only
+says the stream agrees with its own genesis key, exits 3 and prints the `--key` command to run.
+
+Find every decision made under version 14 of the refund policy:
+
+```sh
+tenbri query audit/support --rule policy:refund@14
+```
+
+```text
+     3  2026-10-20T16:53:39.983Z  decision intent   agent:support-assistant  issue_refund stripe:ch_3PqX      -        verified
+     5  2026-10-20T16:53:40.018Z  decision intent   agent:support-assistant  issue_refund stripe:ch_9ZzY      -        verified
+     7  2026-10-20T16:53:40.060Z  decision intent   agent:support-assistant  issue_refund stripe:ch_0         -        verified
+```
+
+Look at one decision, by sequence number or id. With `TENBRI_STREAM` set, the stream can be left
+out:
+
+```sh
+tenbri show 6
+```
+
+```text
+seq 6  decision outcome  01M5D3Q8J4ENZ09F3SXAKS2MS2
+  ts           2026-10-20T16:53:40.039Z
+  hash         sha256:917cc9a8e7c678d0011a4128f37e00336dfb3b401f6c54e5497d2597b0ce2936
+  action       issue_refund stripe:ch_9ZzY
+  intent       01M5D3Q8HEBXC5SGQWDFQ8PEH6
+  principal    agent:support-assistant
+  signer       sess:2026-10-20:5be272bcf58c
+  source       sdk
+  status       refused
+  verification verified, pinned to sha256:d25eb6e105ed964963112ac111b7286a7cf6e31a8adf9fe8bb3a6bca45803161 (recorded in /…/tenbri-demo/keys/pins)
+
+chain:
+      5  2026-10-20T16:53:40.018Z  decision intent   agent:support-assistant  issue_refund stripe:ch_9ZzY      -        verified
+>     6  2026-10-20T16:53:40.039Z  decision outcome  agent:support-assistant  issue_refund stripe:ch_9ZzY      refused  verified
+```
+
+Seq 1 and 2 are the key entries that creating the stream wrote: the genesis entry (the stream key
+certifying itself) and the certification of the session key that signs everything after. On a
+terminal, `tail` and `query` hide them; `--all` shows them. The stream id is `tnb1:` and the first
+32 hex digits of the fingerprint.
+
+## Using an agent framework? One more line
+
+With the Claude Agent SDK, the OpenAI Agents SDK or LangGraph, you do not decorate each tool: one
+line after `init()` records every tool call, approval and handoff. Install the adapter first
+([Adapters](/docs/adapters/)).
+
+```python tab="Python" tab-group="lang"
+import tenbri
+
+tenbri.init()
+tenbri.instrument_claude_agent_sdk()  # pip install --pre tenbri-claude-agent-sdk
+tenbri.instrument_openai_agents()     # pip install --pre tenbri-openai-agents
+tenbri.instrument_langchain()         # pip install --pre tenbri-langgraph
+```
+
+```ts tab="TypeScript" tab-group="lang"
+import { init } from 'tenbri'
+import { instrumentClaudeAgentSdk } from '@tenbri/claude-agent-sdk'
+import { instrumentOpenAIAgents } from '@tenbri/openai-agents'
+import { instrumentLangChain } from '@tenbri/langgraph'
+
+init()
+const options = instrumentClaudeAgentSdk({ canUseTool: askAHuman }) // pass to query({ prompt, options })
+instrumentOpenAIAgents()
+instrumentLangChain()
+```
+
+Call the one for your framework. Each tool call becomes a decision named after the tool; declare
+its target and policy in `tenbri.toml` (`TENBRI_SCHEMA`). Approvals are recorded with the
+principal in `TENBRI_APPROVER` as the approver.
+
+## See tampering fail
+
+Change one byte of entry 3 in a copy of the stream, then verify the copy. The copy is at another
+location, which has no recorded pin, so pass the fingerprint:
+
+```sh
+cp -r audit/support tampered
+sed -i.bak 's/ch_3PqX/ch_3PqZ/' tampered/batches/000000000003.jsonl
+rm tampered/batches/*.bak
+tenbri verify tampered --key sha256:d25eb6e1…
+```
+
+```text
+broken at seq 3: bad_signature: the signature does not verify
+2 entries verified before it, stream tnb1:d25eb6e105ed964963112ac111b7286a
+```
+
+The exit code is 1. `query` on a stream that does not verify also exits 1. From code, `verify()`
+returns a report with `ok` false and the break. In Python, `print(r.ok, r.broken)` after
+`r = Tenbri.open("tampered", key=pin).verify()` shows:
+
+```text
+False Broken(seq=3, code='bad_signature', message='the signature does not verify')
+```
+
+## What is on disk
+
+```text
+tenbri-demo/
+  audit/support/
+    .lock                 held while HEAD is swapped; not part of the stream
+    HEAD
+    batches/000000000001.jsonl
+    ...
+    batches/000000000008.jsonl
+  keys/
+    pins                  the streams tenbri init created here, with their fingerprints
+    tnb1-d25eb6e105ed964963112ac111b7286a/
+      d25eb6e105ed.json   the stream key's public description
+      d25eb6e105ed.secret its secret (0600)
+      5be272bcf58c.json   the session key's public description
+      5be272bcf58c.secret
+```
+
+`HEAD` names the latest entry and is signed by the session key. Each call above wrote its own
+batch file, because the calls ran one after the other.
+
+<Callout type="idea">
+A long-running writer (the Python or Node package, the Rust `Writer`, or `tenbrid`) groups
+concurrent entries into one batch, and writes [checkpoints](/docs/concepts/integrity/#checkpoints).
+</Callout>
+
+## Next
+
+- [Write from code](/docs/examples/rust-writer/): inputs, `agent()` scopes, several streams, and
+  the Rust writer.
+- [Adapters](/docs/adapters/): the Claude Agent SDK, the OpenAI Agents SDK and LangGraph.
+- [Streams and entries](/docs/concepts/streams-and-entries/): every field you can set.
+- [Integrity](/docs/concepts/integrity/): what `verify` checks.
+- [CLI reference](/docs/reference/cli/) and [error codes](/docs/reference/errors/).

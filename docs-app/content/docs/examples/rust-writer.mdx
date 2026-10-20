@@ -1,0 +1,475 @@
+---
+title: Write from code
+description: "Record decisions in process from Python, TypeScript or Rust: init(), decorated functions and agent() scopes, then streams you open yourself, and verify."
+---
+
+
+Your agent is a program and you want to record its decisions in process, without the CLI or a
+server. You will open the default stream with `init()`, record an `issue_refund` decision on each
+call of the function that issues refunds, pin the policy it relied on, record a refusal, run it
+as two different agents, and verify the stream against its pinned fingerprint. Then you check the
+same stream with the `tenbri` CLI.
+
+The Python and Node packages wrap the same Rust writer as the CLI and `tenbrid`. `init()` opens
+one stream for the whole process, and `decision` writes the intent before your function runs and
+the outcome after. To hold several streams, or see every write, you
+[open a stream yourself](#advanced-open-a-stream-yourself). In Rust, you call the writer directly.
+
+**Prerequisites:** optionally the `tenbri` CLI ([install](/docs/getting-started/install/)) to check
+the result, and:
+
+<Tabs groupId="lang" persist items={["Python","TypeScript","Rust"]}>
+<Tab value="Python">
+
+Python 3.10 or later:
+
+```sh
+pip install --pre tenbri
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+Node 20 or later:
+
+```sh
+npm install tenbri@next
+npm pkg set type=module
+```
+
+</Tab>
+<Tab value="Rust">
+
+Rust 1.85 or later with `cargo`.
+
+</Tab>
+</Tabs>
+
+## Record decisions
+
+<Tabs groupId="lang" persist items={["Python","TypeScript","Rust"]}>
+<Tab value="Python">
+
+```python title="agent.py"
+import tenbri
+
+# The default stream: creates it and its keys (in $TENBRI_KEYS) the first time, flushes at exit.
+log = tenbri.init("audit/support")  # or set TENBRI_STREAM and call tenbri.init()
+pin = log.fingerprint
+print("pin this:", pin)
+
+@tenbri.decision(
+    "issue_refund",
+    target="stripe:charge/{charge}",
+    policy="policy:refund@14",
+    # What the decision relied on, pinned by a keyed digest from the local key store.
+    inputs=[("policy:refund", "14", "refunds under 50 EUR are automatic")],
+)
+def refund(charge: str, amount: int) -> str:
+    if amount > 50:
+        raise tenbri.Refused("over the 50 EUR limit")  # the outcome is "refused"
+    return "re_123"  # call the payment API here
+
+with tenbri.agent("agent:support-assistant"):
+    print("refund", refund("ch_3PqX", 20))
+    try:
+        refund("ch_9ZzY", 900)
+    except tenbri.Refused as e:
+        print("refused:", e)
+
+with tenbri.agent("agent:billing"):
+    print("refund", refund("ch_7Kd2", 20))
+
+report = log.verify(pin)
+print("verified:", report.ok, report.entries, "entries")
+```
+
+```sh
+export TENBRI_KEYS=$PWD/keys
+python agent.py
+```
+
+```text
+pin this: sha256:be626433184d9fbefa38b2d3e237642968753db861c06d9cea6170a4e1877a27
+refund re_123
+refused: over the 50 EUR limit
+refund re_123
+verified: True 8 entries
+```
+
+- The intent is durable before `refund` runs; if it cannot be written, `refund` does not run
+  (fail closed) unless `init(fail_open=True)`. Any other exception records the outcome `error`
+  and propagates; a cancelled call records `unknown`.
+- `target` and `subject` are templates of the arguments (`"{order.id}"` reads an attribute or a
+  key) or functions of them. `inputs` may be a function of the arguments too.
+- `with tenbri.agent(...):` sets who acts for the block, and the threads and tasks it starts with
+  its context. `principal=` on the decorator wins over it; `TENBRI_AGENT` is the fallback.
+- `async def` functions are decorated the same way.
+- Input digests are keyed by the stream's local key store, one key per `subject`, so there is no
+  secret in code. `init(digest_key=...)` keys them yourself instead.
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts title="agent.ts"
+import { Refused, agent, decision, init } from 'tenbri'
+
+// The default stream: creates it and its keys (in $TENBRI_KEYS) the first time, flushes at exit.
+const log = await init({ stream: 'audit/support' }) // or set TENBRI_STREAM and call init()
+const pin = log.fingerprint!
+console.log('pin this:', pin)
+
+const refund = decision(
+  {
+    action: 'issue_refund',
+    target: 'stripe:charge/{charge}',
+    policy: 'policy:refund@14',
+    // What the decision relied on, pinned by a keyed digest from the local key store.
+    inputs: [{ ref: 'policy:refund', version: '14', content: 'refunds under 50 EUR are automatic' }],
+  },
+  async ({ charge, amount }: { charge: string; amount: number }) => {
+    if (amount > 50) throw new Refused('over the 50 EUR limit') // the outcome is "refused"
+    return 're_123' // call the payment API here
+  },
+)
+
+await agent('agent:support-assistant', async () => {
+  console.log('refund', await refund({ charge: 'ch_3PqX', amount: 20 }))
+  try {
+    await refund({ charge: 'ch_9ZzY', amount: 900 })
+  } catch (e) {
+    if (!(e instanceof Refused)) throw e
+    console.log('refused:', e.message)
+  }
+})
+
+await agent('agent:billing', async () => {
+  console.log('refund', await refund({ charge: 'ch_7Kd2', amount: 20 }))
+})
+
+const report = await log.verify(pin)
+console.log('verified:', report.ok, report.entries, 'entries')
+```
+
+```sh
+export TENBRI_KEYS=$PWD/keys
+node agent.ts
+```
+
+```text
+pin this: sha256:bc315d705656faa6ee4fb27882cacbc7377be1000535aff503b8685f97371bcc
+refund re_123
+refused: over the 50 EUR limit
+refund re_123
+verified: true 8 entries
+```
+
+- Node 22.18 and later run `.ts` files directly; on Node 20, use `npx tsx agent.ts`.
+- The intent is durable before the function runs; if it cannot be written, the function does not
+  run (fail closed) unless `init({ failOpen: true })`. Any other error records the outcome
+  `error` and is rethrown; an `AbortError` records `unknown`.
+- `target` and `subject` are templates of the arguments (`'{charge}'` reads the first argument's
+  `charge`, `'{1}'` is the second argument) or functions of them. `inputs` may be a function of
+  the arguments too.
+- `agent(principal, fn)` sets who acts for `fn` and what it starts. `principal` in the options
+  wins over it; `TENBRI_AGENT` is the fallback.
+- Input digests are keyed by the stream's local key store, one key per `subject`, so there is no
+  secret in code. `init({ digestKey })` keys them yourself instead.
+
+</Tab>
+<Tab value="Rust">
+
+Create the project and add the crates:
+
+```sh
+cargo new refund-agent
+cd refund-agent
+cargo add tenbri-core@0.1.0-beta.2 tenbri-keys@0.1.0-beta.2 tenbri-store@0.1.0-beta.2 tenbri-writer@0.1.0-beta.2
+cargo add tokio --features macros,rt
+```
+
+Pre-release versions must be named exactly. `tenbri-store` handles local directories by default;
+add `--features s3` for `s3://` and `r2://` streams.
+
+```rust title="src/main.rs"
+use tenbri_core::{Action, Entry, Input, Kind, Principal, PrincipalKind, Status};
+use tenbri_keys::{Key, SESSION_LIFETIME_MS};
+use tenbri_store::LocalStore;
+use tenbri_writer::{Writer, now_ms, verify};
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // A fresh, empty directory for the stream.
+    std::fs::create_dir_all("audit/support")?;
+    let store = LocalStore::open("audit/support")?;
+
+    // The stream key identifies the stream; the session key signs entries.
+    let stream_key = Key::new_stream()?;
+    let session = Key::new_session(now_ms(), SESSION_LIFETIME_MS)?;
+    let pin = stream_key.fingerprint();
+    let mut w = Writer::create(store.clone(), &stream_key, session).await?;
+    println!("stream key fingerprint (pin it): {pin}");
+
+    // The intent: written and durable before the refund runs.
+    let intent = w
+        .intent(Entry {
+            principal: Some(Principal {
+                kind: PrincipalKind::Agent,
+                id: "support-assistant".into(),
+            }),
+            action: Some(Action {
+                r#type: "issue_refund".into(),
+                target: Some("stripe:charge/ch_3PqX".into()),
+            }),
+            inputs: Some(vec![Input {
+                r#ref: "policy:refund".into(),
+                version: "14".into(),
+                digest:
+                    "hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa"
+                        .into(),
+            }]),
+            ..Entry::new(Kind::Decision)
+        })
+        .await?;
+    println!("intent  seq {} id {}", intent.seq, intent.id);
+
+    // ... call the payment API here ...
+
+    let outcome = w.outcome(&intent, Status::Ok).await?;
+    println!(
+        "outcome seq {} closes {}",
+        outcome.seq,
+        outcome.intent.as_deref().unwrap_or("?")
+    );
+
+    // Read the whole stream back and check it against the pinned key.
+    let report = verify(&store, Some(&pin)).await?;
+    match report.broken {
+        None => println!(
+            "verified {} entries, stream {}",
+            report.entries,
+            report.stream.unwrap_or_default()
+        ),
+        Some(b) => println!("{b}"),
+    }
+    Ok(())
+}
+```
+
+`Writer::intent` sets `phase: intent` and `source: sdk`. `Writer::outcome` copies the intent's
+principal, action, source and subject, and sets `intent` and `status`.
+
+```sh
+cargo run -q
+```
+
+```text
+stream key fingerprint (pin it): sha256:2b16e61148c367e71361dbb382993c9aa931f29418d583868b7d631811592db5
+intent  seq 3 id 01M5CWV3QKJS6AFK4VB294XHC0
+outcome seq 4 closes 01M5CWV3QKJS6AFK4VB294XHC0
+verified 4 entries, stream tnb1:2b16e61148c367e71361dbb382993c9a
+```
+
+A second run fails, because the directory already holds a stream:
+
+```text
+Error: Exists
+```
+
+This example keeps the keys in memory and drops them on exit, so nothing can append to the stream
+later. In a real program, create the stream with `tenbri init` (which saves the keys in
+`$TENBRI_KEYS`), then open it with `Writer::open` and hand the writer its keys with
+`Writer::use_keys`, as the CLI does.
+
+</Tab>
+</Tabs>
+
+Seq 1 and 2 are the key entries that creating the stream wrote: the genesis entry signed by the new
+stream key, and the certification of a 24-hour session key that signs everything after. Each
+intent and outcome returned only once its batch and HEAD were durable.
+
+## Check it with the CLI
+
+The stream is a normal stream on disk. After the Python or TypeScript run:
+
+```sh
+tenbri verify audit/support --key sha256:be626433184d9fbefa38b2d3e237642968753db861c06d9cea6170a4e1877a27
+tenbri tail audit/support -n 6 --no-follow | jq -c '{seq, phase, status, principal: .principal.id, target: .action.target, inputs: [.inputs[]?.ref]}'
+```
+
+```text
+verified 8 entries, stream tnb1:be626433184d9fbefa38b2d3e2376429, pinned to sha256:be626433184d9fbefa38b2d3e237642968753db861c06d9cea6170a4e1877a27
+{"seq":3,"phase":"intent","status":null,"principal":"support-assistant","target":"stripe:charge/ch_3PqX","inputs":["policy:refund"]}
+{"seq":4,"phase":"outcome","status":"ok","principal":"support-assistant","target":"stripe:charge/ch_3PqX","inputs":[]}
+{"seq":5,"phase":"intent","status":null,"principal":"support-assistant","target":"stripe:charge/ch_9ZzY","inputs":["policy:refund"]}
+{"seq":6,"phase":"outcome","status":"refused","principal":"support-assistant","target":"stripe:charge/ch_9ZzY","inputs":[]}
+{"seq":7,"phase":"intent","status":null,"principal":"billing","target":"stripe:charge/ch_7Kd2","inputs":["policy:refund"]}
+{"seq":8,"phase":"outcome","status":"ok","principal":"billing","target":"stripe:charge/ch_7Kd2","inputs":[]}
+```
+
+After the Rust run, the stream holds one decision:
+
+```sh
+tenbri verify audit/support --key sha256:2b16e61148c367e71361dbb382993c9aa931f29418d583868b7d631811592db5
+tenbri tail audit/support -n 2 --no-follow | jq -c '{seq, kind, phase, status, action: .action.type}'
+```
+
+```text
+verified 4 entries, stream tnb1:2b16e61148c367e71361dbb382993c9a, pinned to sha256:2b16e61148c367e71361dbb382993c9aa931f29418d583868b7d631811592db5
+{"seq":3,"kind":"decision","phase":"intent","status":null,"action":"issue_refund"}
+{"seq":4,"kind":"decision","phase":"outcome","status":"ok","action":"issue_refund"}
+```
+
+## Advanced: open a stream yourself
+
+`init()` and `decision` are built on `Tenbri.open`. Open a stream yourself to hold several streams
+in one process, to give a digest key of your own, or to get each intent and outcome back. A
+**run** pins what the agent read to its next decision; a **decision** is a context manager, a
+callback or a decorator. The outputs below come from a fresh directory.
+
+<Tabs groupId="lang" persist items={["Python","TypeScript"]}>
+<Tab value="Python">
+
+```python title="stream.py"
+from tenbri import Refused, Tenbri
+
+# Creates the stream and its keys (in $TENBRI_KEYS) the first time; opens it after that.
+# The digest key keys the hashes of what the agent reads: keep it in your secret store.
+log = Tenbri.open("audit/support", create=True, digest_key=b"a 32-byte secret, kept apart....")
+pin = log.fingerprint
+print("pin this:", pin)
+
+with log.run("agent:support-assistant") as run:
+    # What the agent read is pinned to its next decision, by a keyed digest.
+    run.read("policy:refund", "14", "refunds under 50 EUR are automatic")
+
+    # The intent is durable before the block runs; the outcome follows when it exits.
+    with run.decision("issue_refund", "stripe:charge/ch_3PqX") as d:
+        pass  # call the payment API here
+    print("intent ", d.intent["seq"], d.intent["id"], [i["ref"] for i in d.intent["inputs"]])
+    print("outcome", d.outcome["seq"], d.outcome["status"])
+
+    # Raise Refused when your policy says no: the outcome is "refused".
+    try:
+        with run.decision("issue_refund", "stripe:charge/ch_9ZzY") as big:
+            raise Refused("over the 50 EUR limit")
+    except Refused:
+        pass
+    print("outcome", big.outcome["seq"], big.outcome["status"])
+
+# Or decorate a function: the target can come from its arguments.
+@log.decision("issue_refund", target=lambda charge, amount: f"stripe:charge/{charge}", principal="agent:billing")
+def refund(charge: str, amount: int) -> str:
+    return "re_123"  # call the payment API here
+
+refund("ch_7Kd2", 20)
+
+report = log.verify(pin)
+print("verified:", report.ok, report.entries, "entries")
+log.close()
+```
+
+```sh
+export TENBRI_KEYS=$PWD/keys
+python stream.py
+```
+
+```text
+pin this: sha256:eb8bd94ee36f93baf21fcca4851f15623eaad289649b80c549089cfbd82900d2
+intent  3 01M5D12HHCFMEZ566S06DWCAEJ ['policy:refund']
+outcome 4 ok
+outcome 6 refused
+verified: True 8 entries
+```
+
+- Any other exception inside a decision records the outcome `error` and propagates; an
+  interruption (`KeyboardInterrupt`, cancellation) records `unknown`.
+- For asyncio, `await AsyncTenbri.open(...)` has the same methods as coroutines, `async with`
+  decisions, and decorators of `async def` functions. Nothing blocks the event loop.
+- The low level: `log.intent(draft)`, `log.outcome(intent, status)` and `log.append(entry)` take
+  [format v1](/docs/reference/entry-format/) drafts and return entries as stored.
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts title="stream.ts"
+import { Refused, Tenbri } from 'tenbri'
+
+// Creates the stream and its keys (in $TENBRI_KEYS) the first time; opens it after that.
+// The digest key keys the hashes of what the agent reads: keep it in your secret store.
+const log = await Tenbri.open('audit/support', { create: true, digestKey: 'a 32-byte secret, kept apart....' })
+const pin = log.fingerprint!
+console.log('pin this:', pin)
+
+await log.run({ principal: 'agent:support-assistant' }, async (run) => {
+  // What the agent read is pinned to its next decision, by a keyed digest.
+  run.read('policy:refund', { version: '14', content: 'refunds under 50 EUR are automatic' })
+
+  // The intent is durable before the callback runs; the outcome follows when it returns.
+  await run.decision({ action: 'issue_refund', target: 'stripe:charge/ch_3PqX' }, async (intent) => {
+    console.log('intent ', intent.seq, intent.id, intent.inputs?.map((i) => i.ref))
+    // call the payment API here
+  })
+
+  // Throw Refused when your policy says no: the outcome is "refused".
+  try {
+    await run.decision({ action: 'issue_refund', target: 'stripe:charge/ch_9ZzY' }, async () => {
+      throw new Refused('over the 50 EUR limit')
+    })
+  } catch (e) {
+    if (!(e instanceof Refused)) throw e
+    console.log('refused:', e.message)
+  }
+})
+
+// decision() returns what the callback returns.
+const refundId = await log.decision(
+  { action: 'issue_refund', target: 'stripe:charge/ch_7Kd2', principal: 'agent:billing' },
+  async () => 're_123', // call the payment API here
+)
+console.log('refund', refundId)
+
+const report = await log.verify(pin)
+console.log('verified:', report.ok, report.entries, 'entries')
+await log.close()
+```
+
+```sh
+export TENBRI_KEYS=$PWD/keys
+node stream.ts
+```
+
+```text
+pin this: sha256:9aa569f78597fefc853de46750f702a19ad20a9850ecb2f44e07598650d71931
+intent  3 01M5D12HRVSJXXZF9TASAXXZPN [ 'policy:refund' ]
+refused: over the 50 EUR limit
+refund re_123
+verified: true 8 entries
+```
+
+- Node 22.18 and later run `.ts` files directly; on Node 20, use `npx tsx stream.ts`.
+- Any other error thrown inside a decision records the outcome `error` and rejects with it.
+- Every call returns a Promise, and concurrent appends share one group commit.
+- The low level: `log.intent(draft)`, `log.outcome(intent, status)` and `log.append(entry)` take
+  [format v1](/docs/reference/entry-format/) drafts and resolve to entries as stored.
+
+</Tab>
+</Tabs>
+
+<Callout type="warn" title="Pin out of band">
+These programs verify against `log.fingerprint` or the key they just made, which only shows the
+stream agrees with keys on this machine. An auditor pins the fingerprint printed at creation, kept
+where the operator of the stream cannot change it. See [Integrity](/docs/concepts/integrity/).
+</Callout>
+
+## Other ways to write
+
+- Agents built on the Claude Agent SDK, the OpenAI Agents SDK or LangGraph record every tool call
+  with one line after `init()`: see [Adapters](/docs/adapters/).
+- Agents in other languages, or on machines without the keys, write through
+  [tenbrid over REST or gRPC](/docs/examples/tenbrid-rest/).
+- The same code writes to a bucket with an `s3://` or `r2://` location: see
+  [Streams on object storage](/docs/examples/object-storage/).
+
+Related: [Keys](/docs/concepts/keys/) · [Streams and entries](/docs/concepts/streams-and-entries/) ·
+[Integrity](/docs/concepts/integrity/) · [Entry format](/docs/reference/entry-format/)

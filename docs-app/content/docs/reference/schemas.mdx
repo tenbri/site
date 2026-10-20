@@ -1,0 +1,268 @@
+---
+title: Action schemas
+description: The tenbri.toml format, how entries are checked against it, and the output of tenbri schema check.
+---
+
+
+An action schema says what an entry for one action type must carry: the inputs it read, a rule
+(any, or one `ref@version`), an approval, a durability tier, a target pattern, and any other member
+by its dotted path (`rule.result`, `ext.refund.amount`) with a type and allowed values.
+
+Schemas live in `tenbri.toml`. `tenbrid` checks every append against them, and
+`tenbri schema check` checks the file and existing streams. `tenbri append` and the Python and
+TypeScript SDKs do not check them; the SDKs read the file to
+[map tool calls to actions](#in-the-sdks).
+
+## Example
+
+```toml
+# An action type no [actions.*] table declares: "reject" (the default) or "warn".
+unknown_actions = "reject"
+
+[actions.issue_refund]
+inputs = ["policy:refund"]        # refs the entry's inputs must include
+rule = true                       # a rule is required
+approval = true                   # an approval is required
+durability = "replicated"         # the tier the entry must carry
+target = "stripe:charge/{charge}" # `*` and `{argument}` match any run of characters
+policy = "policy:refund@14"       # a rule is required, with this ref and version
+
+[actions.issue_refund.fields."rule.result"]
+allowed = ["allow"]
+
+[actions.issue_refund.fields."ext.refund.amount"]
+required = true
+type = "integer"
+```
+
+## Top-level keys
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `unknown_actions` | `"reject"` or `"warn"` | `"reject"` | What to do with an action type no `[actions.*]` table declares |
+| `actions` | table of tables | empty | One `[actions.<type>]` table per action type; `<type>` is the entry's `action.type` and cannot be empty |
+
+## `[actions.<type>]`
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `description` | string | none | Free text |
+| `inputs` | array of strings | `[]` | Refs the entry's `inputs` must include (any version) |
+| `rule` | boolean | `false` | A `rule` is required |
+| `approval` | boolean | `false` | An `approval` is required |
+| `durability` | `"local"`, `"replicated"` or `"postgres"` | none | The entry's `durability` must be this tier |
+| `target` | string pattern | none | `action.target` must be present and match. `*` and each `{argument}` placeholder match any run of characters. |
+| `policy` | string, `ref@version` | none | A `rule` is required, with this `ref` and `version` |
+| `fields` | table | empty | Rules for any member, keyed by dotted path |
+
+`rule`, `approval`, `durability` and `target` are shorthands for field rules on `rule`,
+`approval`, `durability` and `action.target`. `policy` is a shorthand for two: `rule.ref` and
+`rule.version`, each required and allowed only the value given. It is split at its last `@`, so
+`policy:refund@14` is ref `policy:refund`, version `14`. `rule.result` is not constrained; add a
+field rule for it.
+
+### Argument placeholders in targets
+
+A `target` may name the action's arguments in braces: `stripe:{charge}`,
+`zendesk:ticket/{ticket}`. For checking, each placeholder is a `*`: `stripe:{charge}` checks as
+`stripe:*`, and a violation message shows it that way. A `{` with no closing `}` is literal.
+
+The braces matter to the SDKs: when they record a tool call, they fill each placeholder from the
+call's arguments (`{"charge": "ch_123"}` gives `stripe:ch_123`). See [In the SDKs](#in-the-sdks).
+
+## `[actions.<type>.fields."<path>"]`
+
+The path is a dotted path into the entry. Its first segment must be a top-level member of format
+v1 ([Entry format](/docs/reference/entry-format/)), and no segment may be empty.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `required` | boolean | `false` | The member must be present |
+| `type` | `"string"`, `"integer"`, `"boolean"`, `"object"` or `"array"` | none | The member's JSON type |
+| `allowed` | array | `[]` | The value must be one of these |
+| `pattern` | string | none | A string value must match; `*` matches any run of characters (none included) |
+
+Patterns have one wildcard, `*`. Everything else matches literally: `stripe:charge/*` matches
+`stripe:charge/ch_1`, not `stripe:refund/1`. Argument placeholders (`{charge}`) are only read in an
+action's `target`; in a field's `pattern` they match literally.
+
+## Validating the file
+
+Loading `tenbri.toml` fails, before any entry is read, on:
+
+- an unknown key at any level (`unknown_action`, `input`, `rul`);
+- an `unknown_actions` or `durability` value outside the lists above;
+- an empty action type: `an action type cannot be empty`;
+- a field path outside the entry or with an empty segment:
+  ``actions.<type>: fields."<path>": not a member of a format v1 entry``;
+- an `allowed` value of another type than `type`:
+  ``actions.<type>: fields."<path>": allowed value <v> is not of its type``;
+- a `pattern` with a `type` other than `"string"`:
+  ``actions.<type>: fields."<path>": a pattern needs type "string"``;
+- a `policy` that is not `ref@version` with both parts non-empty (`refund`, `refund@`):
+  `actions.<type>: policy: expected ref@version`.
+
+Errors are prefixed with the file's path:
+
+```text
+$ tenbri schema check --schema bad.toml
+tenbri: bad.toml: actions.issue_refund: policy: expected ref@version
+```
+
+Exit code 2.
+
+## What is checked
+
+- Entries without an `action` (notes, key events) have nothing to check.
+- Every entry naming an action must use a declared action type. With `unknown_actions = "reject"`
+  an undeclared type is a violation on `action.type`; with `"warn"` it is a warning and the entry is
+  written.
+- The requirements (`inputs`, `rule`, `approval`, `durability`, `target`, `policy`, `fields`) apply to
+  intents only (`kind: decision`, `phase: intent`), which state the decision before the action
+  runs. Outcomes, approvals, notes and ingested decisions are checked for a declared action type
+  only.
+
+### Violations
+
+Each violation has a `path` (the member as a dotted path) and a `message`:
+
+| Path | Message | When |
+| --- | --- | --- |
+| `action.type` | `` `<type>` is not declared in tenbri.toml `` | Undeclared type, `unknown_actions = "reject"` |
+| `inputs` | `` an input with ref `<ref>` is required `` | A ref from `inputs` is missing |
+| any | `required` | A required member is absent |
+| any | `expected a string`, `an integer`, `a boolean`, `an object`, `an array` | Wrong type |
+| any | `<value> is not one of <allowed, comma separated>` | Value not in `allowed` (also `durability`) |
+| any | `` <value> does not match `<pattern>` `` | Pattern mismatch (also `target`) |
+
+With `unknown_actions = "warn"`, the warning text is `` `<type>` is not declared in tenbri.toml ``.
+
+## tenbri schema check
+
+```text
+tenbri schema check [PATHS]... [--schema FILE]
+```
+
+`--schema` defaults to `tenbri.toml`. `PATHS` are streams: directories or `s3://` / `r2://` URLs.
+With no path, only the file is checked.
+
+Output:
+
+```text
+<FILE>: <n> action schemas, unknown actions rejected
+<PATH> seq <seq>: warning: <warning>
+<PATH> seq <seq>: <path>: <message>
+<PATH>: <k> entries, <b> break their schema
+```
+
+The first line says `warned about` instead of `rejected` with `unknown_actions = "warn"`. One
+`warning` or violation line per finding, then one summary line per stream.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | The file is valid and no entry breaks its schema (warnings allowed) |
+| `1` | At least one entry breaks its action's schema, or a stream does not verify |
+| `2` | The file is missing or invalid, or a stream cannot be opened |
+
+Example, after adding `rule = true` to `[actions.reply_ticket]` for a stream with an intent at
+seq 3 and no rule:
+
+```text
+audit/support seq 3: rule: required
+audit/support: 3 entries, 1 break their schema
+```
+
+Example with a placeholder target and a policy:
+
+```toml
+[actions.issue_refund]
+target = "stripe:{charge}"
+policy = "policy:refund@14"
+```
+
+for a stream whose intents are `stripe:ch_1` with rule `policy:refund@14` (seq 3),
+`zendesk:1` with rule `policy:refund@13` (seq 4), and `stripe:ch_2` with no rule (seq 5):
+
+```text
+$ tenbri schema check audit/support
+tenbri.toml: 1 action schemas, unknown actions rejected
+audit/support seq 4: action.target: "zendesk:1" does not match `stripe:*`
+audit/support seq 4: rule.version: "13" is not one of "14"
+audit/support seq 5: rule.ref: required
+audit/support seq 5: rule.version: required
+audit/support: 5 entries, 2 break their schema
+```
+
+Exit code 1.
+
+## In tenbrid
+
+`tenbrid` loads the file named by `schema` in its configuration (or `TENBRI_SCHEMA`); with none,
+nothing is checked. An append with violations fails with `TENBRI_SCHEMA_VIOLATION` (422) and a
+`violations` array of `{path, message}`; nothing is written. Warnings come back in the response's
+`warnings`. `GET /v1/schemas` returns the file as JSON. See [API](/docs/reference/api/).
+
+## In the SDKs
+
+The Python and TypeScript SDKs read `tenbri.toml` too, not to check entries but to know what a tool
+call is. `init()` loads the file named by its `schema` argument or `TENBRI_SCHEMA`, else
+`./tenbri.toml` when there is one. An invalid file fails `init()` with `InvalidRequestError` and the same message as
+`tenbri schema check` (`bad.toml: actions.issue_refund: policy: expected ref@version`).
+
+The framework instrumentation (`instrument_claude_agent_sdk()`, `instrument_openai_agents()`,
+`instrument_langchain()` and their TypeScript forms) turns each tool call into intent fields with
+`describe(tool, args)`:
+
+- The tool matches the action schema of its name, or of its last `__` part:
+  `mcp__billing__issue_refund` matches `[actions.issue_refund]`, which is then the action type.
+- A `target` with placeholders and no `*` is filled from the call's arguments. `{name.key}` reads
+  into an argument. A target without placeholders, or with a `*`, is not used: it says nothing
+  about which target this call has.
+- `policy` becomes the intent's `rule`: `{ref, version, result: "allow"}`.
+- An `actions` mapping passed in code (`{"lookup": {"action": "search_kb", "target": "kb:{q}"}}`)
+  overrides the file per tool name; its `target` and `subject` may also be functions of the
+  arguments.
+
+With the schema above:
+
+<Tabs groupId="lang" persist items={["Python","TypeScript"]}>
+<Tab value="Python">
+
+```python
+import tenbri
+
+tenbri.init("audit/support", agent="agent:support")  # reads ./tenbri.toml
+print(tenbri.describe("mcp__billing__issue_refund", {"charge": "ch_9"}))
+print(tenbri.describe("lookup", {"q": "x"}, {"lookup": {"action": "search_kb", "target": "kb:{q}"}}))
+```
+
+```text
+{'action': 'issue_refund', 'target': 'stripe:ch_9', 'rule': {'ref': 'policy:refund', 'version': '14', 'result': 'allow'}}
+{'action': 'search_kb', 'target': 'kb:x'}
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+import { describe, init } from 'tenbri'
+
+await init({ stream: 'audit/support', agent: 'agent:support' }) // reads ./tenbri.toml
+console.log(describe('mcp__billing__issue_refund', { charge: 'ch_9' }))
+```
+
+```text
+{
+  action: 'issue_refund',
+  target: 'stripe:ch_9',
+  rule: { ref: 'policy:refund', version: '14', result: 'allow' }
+}
+```
+
+</Tab>
+</Tabs>
+
+A missing argument fails the call with `InvalidRequestError`:
+`'stripe:{charge}': no argument 'charge'` (Python). The `@decision` decorator takes the same
+templates for its own `target`, `subject` and `policy`
+([SDK reference](/docs/reference/sdk/#decision)).

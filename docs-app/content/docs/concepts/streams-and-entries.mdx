@@ -1,0 +1,355 @@
+---
+title: Streams and entries
+description: What a stream is, what an entry holds, and the rules for each kind of entry.
+---
+
+
+## Streams
+
+A **stream** is an ordered sequence of entries with one writer at a time. Each entry has a
+sequence number, `seq`, that starts at 1 and increases by exactly 1.
+
+A stream is identified by its **stream id**: `tnb1:` followed by the first 32 hex digits of the
+fingerprint of its genesis stream key.
+
+```text
+stream key fingerprint  sha256:5db31441baa2d080326d9f6c83c95319c6e64dd5c33a49257cc54d231cc36484
+stream id               tnb1:5db31441baa2d080326d9f6c83c95319
+```
+
+Human names such as `support` are labels in configuration (a directory name, a key under
+`[streams]` in `tenbrid.toml`). They are never identity.
+
+A stream is stored as plain files, on a local disk or under an object-store prefix:
+
+```text
+<stream>/
+  HEAD                         the latest seq and entry hash, signed
+  batches/000000000001.jsonl   entries, one per line, named by the first seq
+  checkpoints/000000002000.note
+  anchors/000000002000.tsr     RFC 3161 timestamp of that checkpoint, if any
+  blobs/ct-sha256/ab/cd…       encrypted bodies, if any
+```
+
+A **batch** holds consecutive entries and is written once, never rewritten. **HEAD** names the
+latest sequence number and its entry hash; readers follow HEAD, never directory listings. See
+[Integrity](/docs/concepts/integrity/) for how these are checked, and the
+[entry format reference](/docs/reference/entry-format/) for the full rules.
+
+## Entries
+
+An **entry** is one signed record, stored as one line of canonical JSON. This is the `intent`
+entry from the spec's test vectors (`spec/vectors/entries.json`), pretty-printed; the stored line
+has no whitespace:
+
+```json
+{
+  "action": {
+    "target": "zendesk:ticket/4821",
+    "type": "reply_ticket"
+  },
+  "body": "blob:ct-sha256:305531dcc50ebca31cf1d5b31e9fc76ed51f66b3b6dd5a030c6539ae6532f979",
+  "durability": "local",
+  "hlc": {
+    "count": 0,
+    "wall": 1791986533318
+  },
+  "id": "01M4XBH0Y60000000000000003",
+  "inputs": [
+    {
+      "digest": "hmac-sha256:80dadc04df5bae022b918452d942e5ee756e6cf3a7f8ac8f462c8f9a521ac847",
+      "ref": "policy:refund",
+      "version": "14"
+    },
+    {
+      "digest": "hmac-sha256:61eb70aa07259d108510291f2f6e0eb8f216dc1138c119b6ec3a122ab3f3c573",
+      "ref": "contract:acme-sante",
+      "version": "3"
+    }
+  ],
+  "kind": "decision",
+  "phase": "intent",
+  "prev": "sha256:3b75c4e724b4379a38fd76be9b9cee650516210c57a4236c624804cc6eaf72f0",
+  "principal": {
+    "id": "support-assistant",
+    "kind": "agent"
+  },
+  "rule": {
+    "ref": "grants:support-assistant",
+    "result": "allow",
+    "version": "7"
+  },
+  "seq": 3,
+  "sig": "ed25519:7bbb976272f395acd659aa26289b113761cf3af937c1609b…",
+  "signer": "sess:a1",
+  "source": "sdk",
+  "stream": "tnb1:170241c12e8724974ea3b10fe536b7d8",
+  "subject": "subj_7f3c91d2",
+  "trace": {
+    "span_id": "00f067aa0ba902b7",
+    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"
+  },
+  "ts": "2026-10-14T14:02:13.318Z",
+  "v": 1
+}
+```
+
+### Fields
+
+Any top-level member not listed here fails with `unknown_field`. An optional member set to `null`
+is the same as an absent one. Every string must be non-empty; arrays may be empty.
+
+**Filled in by the writer.** `tenbri append` refuses them in its input, except `id` and `ts`,
+which you may set (for idempotent retries and attestations).
+
+| Field | Meaning |
+| --- | --- |
+| `v` | Format version, the integer `1` |
+| `id` | Entry id: a ULID (26 uppercase Crockford base32 characters), unique in the stream |
+| `stream` | The stream id |
+| `seq` | Sequence number, from 1 |
+| `ts` | Timestamp claimed by the writer, `YYYY-MM-DDTHH:MM:SS.mmmZ` in UTC. Claimed, not proven |
+| `prev` | Entry hash of the previous entry; absent on `seq` 1 |
+| `signer` | Key id of the key that signed the entry |
+| `sig` | Ed25519 signature, `ed25519:` and 128 hex digits |
+
+**Set by you.**
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `decision`, `approval`, `key`, `reconcile` or `note` (required) |
+| `phase` | `intent` or `outcome`, for decisions |
+| `intent` | The `id` of the intent an outcome or reconcile closes |
+| `status` | `ok`, `error`, `refused` or `unknown` |
+| `source` | `sdk`, `proxy` or `ingest`: how the entry was produced |
+| `principal` | `{kind, id}` of whoever acted; `kind` is `agent`, `person` or `service` |
+| `action` | `{type, target}`; `target` is optional, a reference, and may be personal data |
+| `inputs` | Array of `{ref, version, digest}`: what the decision read |
+| `rule` | `{ref, version, result}`: the rule or grant that allowed or refused it |
+| `approval` | `{by, entry}`: the approver and the entry hash of the `approval` entry that granted it |
+| `links` | Array of `{stream, seq, hash, rel}`: entries in other streams |
+| `trace` | `{trace_id, span_id}` of the OpenTelemetry span: 32 and 16 lowercase hex digits |
+| `hlc` | Hybrid logical clock `{wall, count}`; never decreases within a stream |
+| `durability` | `local`, `replicated` or `postgres`: the promise that applied when the intent was acknowledged |
+| `degraded` | `true` when written in fail-open mode |
+| `subject` | Pseudonymous handle for per-subject keys ([Privacy](/docs/concepts/privacy/)) |
+| `body` | Address of an encrypted body, `blob:ct-sha256:…` ([Privacy](/docs/concepts/privacy/)) |
+| `attestations` | Array of `{key, sig}`: extra signatures by the principal or an approver |
+| `group` | Genesis entry only: the stream group (group keys are reserved) |
+| `key` | The key event of a `key` entry ([Keys](/docs/concepts/keys/)) |
+| `ext` | Free object for Experimental features; hashed and signed like the rest |
+
+## Kinds
+
+Each kind requires and forbids certain fields. Breaking a rule fails with `invalid_field`.
+
+| Kind | Requires | Forbids |
+| --- | --- | --- |
+| `decision`, phase `intent` | `phase`, `source`, `principal`, `action` | `intent`, `status`, `key`; `source: ingest` |
+| `decision`, phase `outcome` | `phase`, `source`, `principal`, `action`, `status`; `intent` unless `source` is `ingest` | `key`; `intent` when `source` is `ingest` |
+| `approval` | `principal` (the approver), `action` (what is approved) | `phase`, `intent`, `status`, `key` |
+| `key` | `key` | `phase`, `intent`, `status` |
+| `reconcile` | `intent`, `status: unknown` | `phase`, `key` |
+| `note` | nothing | `phase`, `intent`, `status`, `key` |
+
+- **`decision`** records what an agent decided, in two phases.
+- **`approval`** records a human or service approving an action. A later decision points at it
+  with its `approval` member.
+- **`key`** records a key event: certify, rotate or revoke ([Keys](/docs/concepts/keys/)).
+- **`reconcile`** closes an intent that never got its outcome.
+- **`note`** records anything else. Action types starting with `tenbri.` are reserved for notes
+  Tenbri writes itself.
+
+## Intent and outcome
+
+A decision is written twice:
+
+1. The **intent** is written, and durable, before the action runs.
+2. The **outcome** is written after, with a `status`, and names its intent by `id` in the
+   `intent` field.
+
+Every intent ends in exactly one outcome. An outcome must name an intent that appears earlier in
+the same stream and has no outcome yet; otherwise it fails with `bad_intent`.
+
+The Python and TypeScript SDKs do both around a function: the intent is written before it runs
+(if it cannot be, the function does not run), and the outcome after, from how it returned.
+
+```python tab="Python" tab-group="lang"
+import tenbri
+
+tenbri.init("audit/support", agent="agent:support-assistant")
+
+@tenbri.decision("reply_ticket", target="zendesk:ticket/{ticket}")
+def reply(ticket: int, text: str) -> None:
+    if not text:
+        raise tenbri.Refused("empty reply")  # outcome: refused
+
+reply(4821, "Your refund is on its way.")  # intent at seq 3, outcome ok at seq 4
+```
+
+```ts tab="TypeScript" tab-group="lang"
+import { Refused, decision, init } from 'tenbri'
+
+init({ stream: 'audit/support', agent: 'agent:support-assistant' })
+
+const reply = decision({ action: 'reply_ticket', target: 'zendesk:ticket/{ticket}' }, async ({ ticket, text }: { ticket: number; text: string }) => {
+  if (!text) throw new Refused('empty reply') // outcome: refused
+})
+
+await reply({ ticket: 4821, text: 'Your refund is on its way.' }) // intent at seq 3, outcome ok at seq 4
+```
+
+Any other exception is recorded as `error` and re-raised. See the
+[SDK reference](/docs/reference/sdk/#decision) for templates, `policy`, `inputs` and who acts.
+
+When no outcome arrives within the timeout (default 1 hour), the next writer session writes a
+`reconcile` entry for the intent with `status: unknown`. `tenbri append` does this before it
+appends. An outcome that arrives after a reconcile is still accepted and supersedes it. A verifier
+can therefore list the open intents at any sequence number.
+
+Entries with `source: ingest` record what happened elsewhere: they are outcomes with no intent.
+
+## Status
+
+An outcome's `status` is `ok`, `error`, `refused` or `unknown`. A `reconcile` entry always has
+`status: unknown`: nobody recorded what happened.
+
+## Source
+
+| Value | Meaning |
+| --- | --- |
+| `sdk` | The application wrote the entry itself, through the CLI, `tenbrid` or a library |
+| `proxy` | A proxy observed the action. `rule` must be absent |
+| `ingest` | An outcome imported from elsewhere, with no intent. `rule` must be absent |
+
+<Callout type="warn" title="Planned">
+`tenbri-proxy` and the `ingest` command are not built yet. The format accepts `proxy` and `ingest`
+entries, but no Tenbri component writes them today.
+</Callout>
+
+## Inputs and rule
+
+`inputs` pins what the decision read. `ref` and `version` are plaintext, so you can query by them.
+`digest` is a keyed hash of the content, `hmac-sha256:` and 64 hex digits, so a guessed value
+cannot be confirmed from the log. How the digest key is derived is in
+[Privacy](/docs/concepts/privacy/).
+
+Every decision that read version 14 of the refund policy:
+
+<Tabs groupId="lang" persist items={["CLI","Python","TypeScript","REST"]}>
+<Tab value="CLI">
+
+```sh
+tenbri query audit/support --input policy:refund@14 --key sha256:5db31441…
+```
+
+`--input policy:refund` matches any version. `query` also filters by `--action`, `--principal`,
+`--target`, `--subject`, `--rule`, `--status`, `--trace` and a time range
+([CLI](/docs/reference/cli/#query)).
+
+</Tab>
+<Tab value="Python">
+
+```python
+from tenbri import Tenbri
+
+log = Tenbri.open("audit/support", key="sha256:5db31441…")
+for m in log.query(inputs=["policy:refund@14"]):
+    print(m.verification, m.entry["seq"], m.entry["action"])
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+import { Tenbri } from 'tenbri'
+
+const log = await Tenbri.open('audit/support', { key: 'sha256:5db31441…' })
+for (const m of await log.query({ inputs: ['policy:refund@14'] })) {
+  console.log(m.verification, m.entry.seq, m.entry.action)
+}
+```
+
+</Tab>
+<Tab value="REST">
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:7070/v1/streams/support/entries?input=policy:refund@14"
+```
+
+</Tab>
+</Tabs>
+
+`rule` names the rule or grant that allowed or refused the action, with its version and a free
+`result` string (`allow` in the examples). It must be absent when `source` is `proxy` or `ingest`.
+
+## Approvals
+
+An approval is its own entry, of kind `approval`, signed into the stream. The decision it covers
+carries an `approval` member:
+
+```json
+"approval": {
+  "by": { "id": "alice", "kind": "person" },
+  "entry": "sha256:02be6ed67b95774b569ff8a7f6e66e870ea1f2000f27a2dfa624229aceb23792"
+}
+```
+
+`entry` must be the entry hash of an earlier `approval` entry in the same stream; otherwise
+`bad_approval`.
+
+## Links
+
+`links` names entries in other streams, for a decision caused by, handed off from, or approved in
+another stream:
+
+```json
+"links": [
+  {
+    "hash": "sha256:d9298a10d1b0735837dc4bd85dac641b0f3cef27a47e5d53a54f2f3f5b2fcffa",
+    "rel": "cause",
+    "seq": 1,
+    "stream": "tnb1:9db7816d19691cb19e558306e4d4df9e"
+  }
+]
+```
+
+`rel` is optional: `cause`, `handoff` or `approval`. Format v1 checks links for shape only.
+Following a link needs the linked stream's trust root, and that is reserved for later.
+
+## Trace ids
+
+`trace` holds the OpenTelemetry `trace_id` and `span_id` active when the entry was written, so a
+decision links to the trace that produced it. You can set it in any entry you append.
+
+It can also be filled in for you:
+
+- `tenbrid` takes it from the W3C `traceparent` header of an append, unless the draft has one.
+- The Rust writer (`tenbri-writer` with the `otel` feature) puts the active OpenTelemetry span's
+  ids on every entry appended without `trace`. It sends no telemetry itself: the OpenTelemetry API
+  does nothing until your application installs an SDK and an exporter.
+- The Python SDK's `@tenbri.decision` takes it from the active OpenTelemetry span when
+  OpenTelemetry is installed.
+- The Claude Agent SDK and LangGraph adapters take it from the active OpenTelemetry span when
+  OpenTelemetry is installed; the OpenAI Agents SDK adapter takes it from that SDK's own tracing
+  ([Adapters](/docs/adapters/)).
+
+`tenbri query --trace <trace id>` and the `trace_id` query parameter of `tenbrid` find the entries
+of one trace.
+
+## Durability
+
+`durability` records the promise that applied when an intent was acknowledged: `local`,
+`replicated` or `postgres`. It is optional; the CLI does not set it. A writer acknowledges an
+intent only after its batch is written and HEAD has moved to it.
+
+<Callout type="warn" title="Planned">
+Postgres storage is not built yet.
+</Callout>
+
+## Next
+
+- [Integrity](/docs/concepts/integrity/): how entries are hashed, chained and signed.
+- [Entry format reference](/docs/reference/entry-format/) and [error codes](/docs/reference/errors/).
+- [Action schemas](/docs/reference/schemas/): constrain what each action type must carry.

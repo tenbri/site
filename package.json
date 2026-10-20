@@ -5,14 +5,17 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "build": "astro build && pnpm check:dashes",
+    "build": "astro build && pnpm build:docs && pnpm check:dashes && pnpm check:docs",
     "preview": "astro preview",
     "astro": "astro",
-    "check:dashes": "echo 'Checking for em and en dashes (not allowed on this site)' && ! grep -rnE '—|–' src dist README.md --include='*.astro' --include='*.md' --include='*.mdx' --include='*.ts' --include='*.css' --include='*.html' --include='*.xml'"
+    "check:dashes": "echo 'Checking for em and en dashes (not allowed on this site)' && ! grep -rnE '—|–' src dist docs-app README.md --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=.source --exclude-dir=out --include='*.astro' --include='*.md' --include='*.mdx' --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.json' --include='*.css' --include='*.html' --include='*.xml'",
+    "build:docs": "pnpm --filter docs-app build && rm -rf dist/docs && cp -R docs-app/out dist/docs",
+    "dev:docs": "pnpm --filter docs-app dev",
+    "check:docs": "node docs-app/scripts/check-export.mjs"
   },
   "dependencies": {
+    "@astrojs/mdx": "^8.1.0",
     "@astrojs/rss": "^4.0.19",
-    "@astrojs/starlight": "^0.42.6",
     "@fontsource-variable/bricolage-grotesque": "^5.3.0",
     "@fontsource-variable/instrument-sans": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",

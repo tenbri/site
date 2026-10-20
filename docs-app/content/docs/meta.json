@@ -1,0 +1,17 @@
+{
+  "root": true,
+  "pages": [
+    "---Start here---",
+    "introduction",
+    "why-not-logs",
+    "...getting-started",
+    "---Concepts---",
+    "...concepts",
+    "---Examples---",
+    "...examples",
+    "---Adapters---",
+    "...adapters",
+    "---Reference---",
+    "...reference"
+  ]
+}

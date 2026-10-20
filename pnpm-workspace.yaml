@@ -1,0 +1,9 @@
+packages:
+  - docs-app
+
+# Only install versions published at least two weeks ago (minutes).
+minimumReleaseAge: 20160
+
+# pnpm 11 blocks dependency build scripts unless they are listed here.
+allowBuilds:
+  esbuild: true

@@ -1,0 +1,102 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+/* The site's palette and fonts (paper, ink, rule, stamp...), shared with the landing page and blog. */
+@import '../../src/styles/tokens.css';
+
+
+@theme {
+  --font-sans: 'Instrument Sans Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-display: 'Bricolage Grotesque Variable', 'Avenir Next', system-ui, sans-serif;
+}
+
+/* Fumadocs colours from the site tokens. tokens.css switches them with data-theme. */
+:root,
+:root.dark {
+  --color-fd-background: var(--paper);
+  --color-fd-foreground: var(--ink);
+  --color-fd-muted: var(--paper-2);
+  --color-fd-muted-foreground: var(--ink-2);
+  --color-fd-popover: var(--paper);
+  --color-fd-popover-foreground: var(--ink);
+  --color-fd-card: var(--paper-2);
+  --color-fd-card-foreground: var(--ink);
+  --color-fd-border: var(--rule);
+  --color-fd-primary: var(--stamp);
+  --color-fd-primary-foreground: #fff;
+  --color-fd-secondary: var(--paper-2);
+  --color-fd-secondary-foreground: var(--ink);
+  --color-fd-accent: color-mix(in srgb, var(--rule) 70%, transparent);
+  --color-fd-accent-foreground: var(--ink);
+  --color-fd-ring: var(--stamp);
+  --color-fd-info: var(--lens);
+  --color-fd-warning: var(--amber);
+  --color-fd-error: var(--bad);
+  --color-fd-success: var(--ok);
+  --color-fd-idea: var(--stamp);
+}
+.dark #nd-sidebar {
+  --color-fd-muted: var(--paper-2);
+  --color-fd-secondary: var(--paper-2);
+  --color-fd-muted-foreground: var(--ink-2);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+/* Headings in the display face, tight like the landing page. */
+h1,
+h2,
+.prose :is(h2, h3, h4) {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+}
+.prose h2 {
+  font-weight: 700;
+}
+.prose h3 {
+  font-weight: 650;
+}
+
+/* Inline code and links: the stamp accent, quietly. */
+.prose :not(pre) > code {
+  font-size: 0.86em;
+  border-color: var(--rule);
+  background: var(--paper-2);
+}
+/* Long JSON or hashes in running text wrap on phones instead of running off the page. */
+.prose :is(p, li) > code {
+  overflow-wrap: anywhere;
+}
+.prose a:not([data-card]) {
+  text-decoration-color: color-mix(in srgb, var(--stamp) 55%, transparent);
+  text-underline-offset: 3px;
+}
+.prose a:not([data-card]):hover {
+  text-decoration-color: var(--stamp);
+}
+
+/* Code blocks: mono face, a little tighter. */
+.prose pre,
+.prose pre code {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.7;
+}
+
+
+/* Excalidraw drawings invert in dark mode, as on the blog. */
+:root.dark .prose img[src*='.excalidraw'] {
+  filter: invert(93%) hue-rotate(180deg);
+}

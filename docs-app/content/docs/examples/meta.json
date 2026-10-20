@@ -1,0 +1,12 @@
+{
+  "pages": [
+    "index",
+    "record-a-refund",
+    "verify-as-an-auditor",
+    "policy-change-review",
+    "schemas-in-ci",
+    "tenbrid-rest",
+    "object-storage",
+    "rust-writer"
+  ]
+}

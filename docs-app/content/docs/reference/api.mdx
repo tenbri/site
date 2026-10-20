@@ -1,0 +1,304 @@
+---
+title: tenbrid API
+description: "How to run tenbrid and use its REST and gRPC API: endpoints, headers, errors and configuration."
+---
+
+`tenbrid` serves the same operations over REST and gRPC: append intents, outcomes, approvals and
+batches; get, query and tail entries; receipts; verify a stream; list the action schemas; health
+and readiness.
+
+The contracts are checked in:
+
+- REST: [contract/openapi.v1.yaml](https://github.com/tenbri/tenbri/blob/main/contract/openapi.v1.yaml) (OpenAPI 3.1)
+- gRPC: [contract/proto/tenbri/v1/tenbri.proto](https://github.com/tenbri/tenbri/blob/main/contract/proto/tenbri/v1/tenbri.proto)
+
+## Running tenbrid
+
+```text
+tenbrid [--config FILE]
+tenbrid token
+```
+
+| Command or flag | Meaning |
+| --- | --- |
+| `--config FILE` | The configuration file. Default: `$TENBRI_CONFIG`, else `tenbrid.toml`. |
+| `token` | Print a new bearer token, and the `[[tokens]]` entry that configures it (by its hash) |
+
+`tenbrid` serves until SIGINT or SIGTERM, then stops accepting requests, ends tails, and waits for
+the writes in flight. On start it prints to stderr:
+
+```text
+tenbrid <version>: REST on http://<listen>, gRPC on <grpc_listen>, <n> streams
+```
+
+and on stop `tenbrid: stopped; every acknowledged entry is durable`. Exit code 0 after a clean
+shutdown, 2 on a configuration or startup error (`tenbrid: <message>` on stderr).
+
+### Tokens
+
+`tenbrid` has no unauthenticated mode. Make a token:
+
+```text
+$ tenbrid token
+token (give it to the client; it is not stored): tnbt_<64 hex>
+
+[[tokens]]
+sha256 = "sha256:<64 hex>"
+principal = { kind = "agent", id = "..." }
+```
+
+Paste the `[[tokens]]` entry into the configuration and fill in the principal. Only the token's
+SHA-256 is stored.
+
+### Configuration file
+
+```toml
+listen = "127.0.0.1:7070"        # REST; TENBRI_LISTEN
+grpc_listen = "127.0.0.1:7071"   # gRPC; TENBRI_GRPC_LISTEN
+keys = "/var/lib/tenbri/keys"    # TENBRI_KEYS; default ~/.config/tenbri/keys
+schema = "tenbri.toml"           # action schemas; TENBRI_SCHEMA; none: nothing is checked
+queue = 10000                    # appends waiting per stream (a batch counts once); TENBRI_QUEUE
+deadline_ms = 2000               # how long an append waits for the queue; TENBRI_DEADLINE_MS
+index_dir = "/var/cache/tenbri/index"  # query indexes, one directory per stream; TENBRI_INDEX_DIR
+
+[streams.support]                # the stream's name in URLs (its tnb1: id works too)
+path = "/var/lib/tenbri/audit/support"  # or s3://bucket/prefix, r2://bucket/prefix
+key = "sha256:..."               # pin; default: the stream key held in `keys`
+index = "sqlite"                 # the query index: sqlite (default) or parquet
+
+[anchor]                         # optional: RFC 3161 timestamps of checkpoints
+tsa = "https://tsa.example/"     # the timestamp authority's URL
+every_s = 3600                   # how often the latest checkpoint is timestamped
+
+[[tokens]]                       # `tenbrid token` makes one
+sha256 = "sha256:..."            # SHA-256 of the bearer token; the token is never stored
+principal = { kind = "agent", id = "support-assistant" }
+streams = ["support"]            # default: every stream
+```
+
+| Key | Type | Default | Env override |
+| --- | --- | --- | --- |
+| `listen` | socket address | `127.0.0.1:7070` | `TENBRI_LISTEN` |
+| `grpc_listen` | socket address | `127.0.0.1:7071` | `TENBRI_GRPC_LISTEN` |
+| `keys` | path | `~/.config/tenbri/keys` | `TENBRI_KEYS` |
+| `schema` | path | none (nothing is checked) | `TENBRI_SCHEMA` |
+| `queue` | integer | `10000` | `TENBRI_QUEUE` |
+| `deadline_ms` | integer | `2000` | `TENBRI_DEADLINE_MS` |
+| `index_dir` | path | the user's cache directory (`tenbri/index` in it) | `TENBRI_INDEX_DIR` |
+| `streams.<name>.path` | string | required | |
+| `streams.<name>.key` | string (`sha256:...` or `ed25519:...`) | the stream key held in `keys` | |
+| `streams.<name>.index` | `"sqlite"` or `"parquet"` | `"sqlite"` | |
+| `anchor.tsa` | URL | required in `[anchor]` | |
+| `anchor.every_s` | integer, at least 1 | `3600` | |
+| `tokens[].sha256` | `sha256:<64 hex>` | required | |
+| `tokens[].principal` | `{kind, id}` | required | |
+| `tokens[].streams` | array of stream names | every stream | |
+
+- Unknown keys are errors. At least one `[streams.<name>]` and one `[[tokens]]` are required.
+- Relative paths in the file are relative to the file's directory; paths from the environment are
+  relative to the working directory.
+- `queue` must be at least 1. A token naming a stream that is not configured is an error.
+- Object stores take credentials from `AWS_*` (and `CLOUDFLARE_ACCOUNT_ID` for R2), as `tenbri`
+  does. See [Storage](/docs/reference/storage/).
+- Queries go through each stream's index, kept under `index_dir` as `tenbri index rebuild` keeps it
+  ([CLI](/docs/reference/cli/#index-rebuild)). The index is derived and safe to delete. With no
+  `index_dir`, no `TENBRI_INDEX_DIR` and no cache directory, `tenbrid` fails to start with
+  `no index directory: set index_dir or TENBRI_INDEX_DIR`.
+- With `[anchor]`, the latest checkpoint of every stream is timestamped every `every_s` seconds if
+  it has no token yet; the token is stored at `anchors/<size>.tsr` and receipts carry it.
+
+## Authentication
+
+Every request but `/v1/health`, `/v1/ready` and gRPC health checks carries:
+
+```http
+Authorization: Bearer <token>
+```
+
+Each token is bound to one principal. Entries it writes carry that principal: a draft without
+`principal` (decisions and approvals) gets the token's, and a draft naming another principal fails
+with `TENBRI_FORBIDDEN`. A token with `streams` may only use those streams.
+
+## REST endpoints
+
+`{stream}` is the stream's name in the configuration, or its id (`tnb1:...`).
+
+| Method | Path | Purpose | Success |
+| --- | --- | --- | --- |
+| `GET` | `/v1/health` | Liveness: the process answers. No token. | 200 `StatusBody` |
+| `GET` | `/v1/ready` | Readiness: not shutting down, and every stream verifies and has a session key. No token. | 200 or 503 `StatusBody` |
+| `GET` | `/v1/schemas` | The action schemas declared in `tenbri.toml`, as JSON `{unknown_actions, actions}` | 200 |
+| `POST` | `/v1/streams/{stream}/intents` | Append an intent; returns once it is durable, before the action runs | 201 or 200 `AppendedBody` |
+| `POST` | `/v1/streams/{stream}/outcomes` | Append the outcome of an intent | 201 or 200 `AppendedBody` |
+| `POST` | `/v1/streams/{stream}/approvals` | Append an approval | 201 or 200 `AppendedBody` |
+| `POST` | `/v1/streams/{stream}/entries` | Append up to 1000 entries in order | 200 `BatchBody` |
+| `GET` | `/v1/streams/{stream}/entries` | Entries matching every filter given, in sequence order, through the stream's index | 200 `QueryBody` |
+| `GET` | `/v1/streams/{stream}/entries/{id}` | One entry by id | 200 `QueriedBody` |
+| `GET` | `/v1/streams/{stream}/entries/{id}/receipt` | A receipt for one entry, canonical JSON. If no checkpoint covers the entry yet, `tenbrid` seals one first. | 200 |
+| `GET` | `/v1/streams/{stream}/tail` | Server-sent events: entries after a sequence number, then new ones | 200 `text/event-stream` |
+| `GET` | `/v1/streams/{stream}/verify` | Read the whole stream from storage and check it against its pinned key | 200 `VerifyBody` |
+
+On append, 201 means written and durable; 200 means replayed (the entry this `Idempotency-Key`
+wrote before).
+
+### Request bodies
+
+Drafts are JSON objects in the shape of an entry, without the members the writer fills (`v`,
+`stream`, `seq`, `prev`, `signer`, `sig`). See [Entry format](/docs/reference/entry-format/).
+
+| Endpoint | Draft | Defaults filled by tenbrid |
+| --- | --- | --- |
+| `intents` | `action`, `inputs`, `rule`, `subject`, `approval`, `trace`, `links`, `ext`... | `kind: decision`, `phase: intent`, `principal` from the token, `source: sdk`, `durability` (below), `id` from `Idempotency-Key` |
+| `outcomes` | `intent` (the intent's id) and `status` (`ok`, `error`, `refused`, `unknown`) | `kind`, `phase: outcome`; `principal`, `action`, `subject` and `source` from the intent |
+| `approvals` | `action` approved | `kind: approval`, `principal` from the token |
+| `entries` (batch) | `{"entries": [draft, ...]}`, each draft with its `id` (a ULID, the idempotency key) and `kind` | |
+
+- `kind` and `phase` may be left out; if present they must match the endpoint.
+- `key` and `reconcile` entries are refused (`TENBRI_INVALID_ENTRY`): `tenbri` and `tenbrid` write
+  them themselves.
+- `durability` on an intent defaults to `local` on a local-disk stream and `replicated` on an
+  object store. `replicated` is refused on local disk and `postgres` is refused everywhere.
+- A batch is checked as a whole before any entry is written. If storage fails part-way, the
+  earlier entries stay written and retrying the batch is safe.
+
+### Response bodies
+
+| Schema | Shape |
+| --- | --- |
+| `AppendedBody` | `{entry, replayed, warnings?}`: the entry as stored (canonical JSON), whether it was replayed, schema warnings |
+| `BatchBody` | `{entries: [AppendedBody, ...]}` in request order |
+| `QueriedBody` | `{verification, entry, seq, hash}`: `verification` is `verified` or `broken`; `seq` and `hash` are the entry's sequence number and entry hash, to check against the chain, a checkpoint or a receipt |
+| `QueryBody` | `{entries: [QueriedBody, ...], next_after_seq?, as_of}` |
+| `AsOfBody` | `{stream, seq, hash, checkpoint?}`: what the index had read when it answered, and the size of the latest checkpoint at or below `seq`, if any |
+| `VerifyBody` | `{stream, entries, pinned_key, broken?}`, `broken` is `{seq, code, message}` and absent when the stream verifies |
+| `StatusBody` | `{status}`: `ok`, `ready` or `not_ready` |
+
+### Query parameters
+
+`GET /v1/streams/{stream}/entries`. Every filter given must match. Unknown parameters fail with
+`TENBRI_INVALID_REQUEST`.
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `input` | string, repeatable | An input the entry used, as `ref@version` (`policy:refund@14`), or `ref` for any version; repeat to require several |
+| `action` | string | The action type (`reply_ticket`) |
+| `principal` | string | `kind:id` (`agent:support-assistant`) |
+| `target` | string | The action target, exactly |
+| `subject` | string | The subject handle |
+| `rule` | string | The rule, as `ref@version`, or `ref` for any version |
+| `since` | string | Entries at or after this time: `2026-10-20T09:00:00.000Z`, `2026-10-20T09:00:00Z`, `2026-10-20`, or a duration ago (`90s`, `15m`, `1h`, `7d`); compared with `ts`, the writer's claimed time. Anything else: `TENBRI_INVALID_REQUEST` (`since=<value>: not a time`). |
+| `until` | string | Entries before this time, in the same forms |
+| `trace_id` | string | The OpenTelemetry trace id (32 hex digits) |
+| `status` | string | An outcome's status: `ok`, `error`, `refused` or `unknown` |
+| `after_seq` | integer | Only entries with a greater sequence number |
+| `limit` | integer | At most this many entries: default 100, at most 1000 |
+
+When more entries match, the response carries `next_after_seq`: pass it as `after_seq` for the next
+page.
+
+`tenbrid` verifies each stream when it starts and keeps what it verified in memory. Before it
+answers a query, it re-reads from storage the batches holding the entries on the page and checks
+each entry's hash and bytes against them. If one was edited on disk since, the query fails instead
+of answering from memory, with HTTP 500 (gRPC `DATA_LOSS`):
+
+```json
+{"error":{"code":"TENBRI_STREAM_BROKEN","message":"the stream changed under the index at seq 3: run `tenbri verify`"}}
+```
+
+A query whose page holds no entry from the edited batch still answers (an empty page included).
+`GET .../entries/{id}` answers from what `tenbrid` verified without re-reading storage;
+`GET .../verify` reads and checks the whole stream. A stream that no longer verifies also stops
+`tenbrid` from starting.
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:7070/v1/streams/support/entries?input=policy:refund&since=1h&limit=1"
+```
+
+```json
+{"entries":[{"verification":"verified","entry":{...},"seq":8,"hash":"sha256:0879ce1f…"}],"as_of":{"stream":"tnb1:dc736478ac6b04bad25e3a3a6f8d71aa","seq":8,"hash":"sha256:0879ce1f…","checkpoint":4}}
+```
+
+### Tail
+
+`GET /v1/streams/{stream}/tail` sends the entries after `after_seq` (default 0), then new ones as
+they are written. Each `entry` event has the entry's sequence number as its `id` and a
+`QueriedBody` as its data. An `error` event carrying an `ErrorBody` ends the stream. A tail that
+falls too far behind gets `TENBRI_TAIL_LAGGED`: reconnect with `after_seq`.
+
+## Headers
+
+| Header | Direction | Meaning |
+| --- | --- | --- |
+| `Authorization: Bearer <token>` | request | Required on every endpoint but health and readiness |
+| `Idempotency-Key` | request | Required on `intents`, `outcomes` and `approvals`: the entry id, a ULID the client generates. The same key with the same draft returns the original entry (200, `replayed: true`); with another draft it fails with `TENBRI_IDEMPOTENCY_CONFLICT`. Batches carry each entry's `id` instead. |
+| `traceparent` | request | W3C Trace Context on appends: becomes the entry's `trace` (trace and span id) unless the draft has one; on a batch, the `trace` of every draft without one. An invalid header is ignored. |
+| `Last-Event-ID` | request | On `tail`: resume after this sequence number when `after_seq` is absent. Not a number: `TENBRI_INVALID_REQUEST`. |
+| `Retry-After` | response | On every 503, value `1` |
+
+## Errors
+
+Every REST error has one body:
+
+```json
+{
+  "error": {
+    "code": "TENBRI_SCHEMA_VIOLATION",
+    "message": "...",
+    "violations": [{ "path": "rule", "message": "required" }]
+  }
+}
+```
+
+`reason` holds the format v1 code (see [Errors](/docs/reference/errors/)) for
+`TENBRI_INVALID_ENTRY` and `TENBRI_STREAM_BROKEN`; `violations` is present for
+`TENBRI_SCHEMA_VIOLATION`.
+
+| Code | HTTP | gRPC | Meaning |
+| --- | --- | --- | --- |
+| `TENBRI_INVALID_REQUEST` | 400 | `INVALID_ARGUMENT` | Malformed request: not JSON, a missing or malformed `Idempotency-Key`, an unknown query parameter |
+| `TENBRI_INVALID_ENTRY` | 400 | `INVALID_ARGUMENT` | The entry breaks a rule of format v1; `reason` holds the code. Nothing was written. |
+| `TENBRI_SCHEMA_VIOLATION` | 422 | `INVALID_ARGUMENT` | The entry breaks its action's schema; `violations` lists how. Nothing was written. |
+| `TENBRI_UNAUTHENTICATED` | 401 | `UNAUTHENTICATED` | No bearer token, or one `tenbrid` does not know |
+| `TENBRI_FORBIDDEN` | 403 | `PERMISSION_DENIED` | The token may not use this stream, or the entry names another principal than the token's |
+| `TENBRI_NOT_FOUND` | 404 | `NOT_FOUND` | No such stream or entry |
+| `TENBRI_IDEMPOTENCY_CONFLICT` | 409 | `ALREADY_EXISTS` | The `Idempotency-Key` (the entry id) was used for a different entry |
+| `TENBRI_WRITE_CONFLICT` | 409 | `ABORTED` | Another writer holds the stream; nothing was written |
+| `TENBRI_DEADLINE_EXCEEDED` | 503 | `RESOURCE_EXHAUSTED` | Backpressure: the stream's queue stayed full, or its writer busy, past the deadline. Retry after `Retry-After`. |
+| `TENBRI_STORE_UNAVAILABLE` | 503 | `UNAVAILABLE` | Storage failed; the entry may not be durable. Retrying with the same key is safe. |
+| `TENBRI_NO_SESSION_KEY` | 503 | `UNAVAILABLE` | No usable session key for the stream and no stream key to certify one |
+| `TENBRI_TAIL_LAGGED` | 503 | `RESOURCE_EXHAUSTED` | A tail fell too far behind the writer; reconnect with `after_seq` |
+| `TENBRI_STREAM_BROKEN` | 500 | `DATA_LOSS` | The stream does not verify; `tenbrid` stopped writing to it. On a query: a batch holding an entry of the page was edited on disk since `tenbrid` read it (``the stream changed under the index at seq <n>: run `tenbri verify` ``), with no `reason`. |
+| `TENBRI_INTERNAL` | 500 | `INTERNAL` | A bug |
+
+## gRPC
+
+Service `tenbri.v1.TenbriService`, plus the standard `grpc.health.v1` health service (services
+`""` and `tenbri.v1.TenbriService`). Every call but health checks carries
+`authorization: Bearer <token>` metadata. A failed call carries the Tenbri error code in the
+`tenbri-error-code` metadata and the REST error body as JSON in `tenbri-error-bin`.
+
+Entries travel as their canonical JSON, the exact bytes that are hashed and signed. Drafts travel
+as JSON objects of the same shape, without the members the writer fills.
+
+| Method | Request | Response | REST equivalent |
+| --- | --- | --- | --- |
+| `AppendIntent` | `stream`, `idempotency_key`, `draft_json` | `Appended` | `POST .../intents` |
+| `AppendOutcome` | `stream`, `idempotency_key`, `draft_json` | `Appended` | `POST .../outcomes` |
+| `AppendApproval` | `stream`, `idempotency_key`, `draft_json` | `Appended` | `POST .../approvals` |
+| `AppendBatch` | `stream`, `drafts_json` (repeated) | repeated `Appended` | `POST .../entries` |
+| `GetEntry` | `stream`, `id` | `QueriedEntry` | `GET .../entries/{id}` |
+| `GetReceipt` | `stream`, `id` | `receipt` (bytes, canonical JSON) | `GET .../entries/{id}/receipt` |
+| `QueryEntries` | `stream`, `inputs`, `action`, `principal`, `target`, `subject`, `after_seq`, `limit`, `rule`, `since`, `until`, `trace_id`, `status` | repeated `QueriedEntry`, `next_after_seq` (0 when no more), `as_of` | `GET .../entries` |
+| `TailEntries` | `stream`, `after_seq` | server stream of `QueriedEntry` | `GET .../tail` |
+| `VerifyStream` | `stream` | `stream_id`, `entries`, `pinned_key`, `broken` (`seq`, `code`, `message`) | `GET .../verify` |
+| `ListSchemas` | none | `schemas_json` | `GET /v1/schemas` |
+
+- `Appended` is `entry_json`, `replayed`, `warnings`.
+- `QueriedEntry` is `entry_json`, `verification`, `seq` and `hash`. `verification` is
+  `VERIFICATION_VERIFIED` (checked from the pinned genesis key up to this entry) or
+  `VERIFICATION_BROKEN` (at or after the first sequence number that no longer verifies, such as a
+  revocation reaching back).
+- `AsOf` is `stream_id`, `seq`, `hash` and `checkpoint` (0 when there is none).
+- `QueryEntries.limit`: 0 means 100, more than 1000 is 1000.
+- The proto is frozen per major version: fields are added, never changed.
