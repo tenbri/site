@@ -1,118 +1,122 @@
 ---
-// Tenbri's architecture: four steps, each a card. Available parts carry a check, optional parts
-// a blue "optional" pill, and coming-soon parts sit apart in the card's muted footer.
-interface Item { name: string; detail?: string; href?: string; optional?: boolean; progress?: boolean }
-interface Step { title: string; who: string; icon: string; items: Item[]; soon: string[] }
+// Tenbri's architecture as a stage-by-status matrix: four process chevrons across the top,
+// one row per status (available, optional, coming soon). A part's row is its status.
+interface Item { name: string; detail?: string; href?: string }
+interface Stage { title: string; who: string; available: Item[]; optional: Item[]; soon: string[] }
 interface Props { wide?: boolean }
 const { wide = false } = Astro.props;
 
-const icons = {
-	write: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
-	chain: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
-	store: 'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
-	prove: 'M9 12l2 2 4-4m5 2a8 8 0 1 1-16 0 8 8 0 0 1 16 0z',
-};
-
-const steps: Step[] = [
+const stages: Stage[] = [
 	{
 		title: 'Write',
 		who: 'Your agents and services',
-		icon: icons.write,
-		items: [
-			{ name: '@tenbri.decision', detail: 'Python and TypeScript', href: '/docs/reference/sdk/' },
+		available: [
+			{ name: '@tenbri.decision', detail: 'Python, TypeScript', href: '/docs/reference/sdk/' },
 			{ name: 'Framework adapters', detail: 'Claude, OpenAI, LangGraph', href: '/docs/adapters/' },
 			{ name: 'tenbri CLI', detail: 'tenbri append', href: '/docs/reference/cli/' },
-			{ name: 'tenbrid', detail: 'REST and gRPC for any language', href: '/docs/reference/api/', optional: true },
 		],
+		optional: [{ name: 'tenbrid', detail: 'REST and gRPC daemon', href: '/docs/reference/api/' }],
 		soon: ['Proxy-observed entries', 'Ingest and Kafka'],
 	},
 	{
 		title: 'Sign and chain',
-		who: 'The Tenbri core (Rust)',
-		icon: icons.chain,
-		items: [
-			{ name: 'Intent, then outcome', detail: 'durable before the action runs', href: '/docs/concepts/streams-and-entries/' },
+		who: 'Tenbri core, in Rust',
+		available: [
+			{ name: 'Intent, then outcome', detail: 'durable before the action', href: '/docs/concepts/streams-and-entries/' },
 			{ name: 'Hash chain, Ed25519', detail: 'certified session keys', href: '/docs/concepts/integrity/' },
-			{ name: 'Action schemas', detail: 'tenbri.toml', href: '/docs/reference/schemas/', optional: true },
-			{ name: 'Privacy', detail: 'encrypted bodies, erasure', href: '/docs/concepts/privacy/', optional: true },
-			{ name: 'OS keychain', detail: 'macOS and Windows', href: '/docs/concepts/keys/', optional: true },
 		],
-		soon: ['PKCS#11 and cloud KMS', 'Passkey attestations'],
+		optional: [
+			{ name: 'Action schemas', detail: 'tenbri.toml', href: '/docs/reference/schemas/' },
+			{ name: 'Privacy', detail: 'encrypted bodies, erasure', href: '/docs/concepts/privacy/' },
+			{ name: 'OS keychain', detail: 'macOS, Windows', href: '/docs/concepts/keys/' },
+		],
+		soon: ['PKCS#11, cloud KMS', 'Passkey attestations'],
 	},
 	{
 		title: 'Store',
 		who: 'Storage you control',
-		icon: icons.store,
-		items: [
+		available: [
 			{ name: 'Local disk', href: '/docs/reference/storage/' },
 			{ name: 'Cloudflare R2, MinIO', href: '/docs/examples/object-storage/' },
-			{ name: 'AWS S3', detail: 'real S3 tests before rc.1', href: '/docs/examples/object-storage/', progress: true },
-			{ name: 'Query index', detail: 'SQLite or Parquet', href: '/docs/reference/storage/', optional: true },
+			{ name: 'AWS S3', detail: 'in progress, real S3 before rc.1', href: '/docs/examples/object-storage/' },
 		],
+		optional: [{ name: 'Query index', detail: 'SQLite or Parquet', href: '/docs/reference/storage/' }],
 		soon: ['GCS, Azure Blob, Postgres', 'Iceberg index, --as-of'],
 	},
 	{
 		title: 'Prove',
 		who: 'Anyone with the fingerprint',
-		icon: icons.prove,
-		items: [
-			{ name: 'Verify offline', detail: 'CLI, Python, Node, tenbrid', href: '/docs/examples/verify-as-an-auditor/' },
-			{ name: 'Query and tail', detail: 'by policy version, action, trace', href: '/docs/examples/policy-change-review/' },
-			{ name: 'Checkpoints, receipts', detail: 'proof for one decision', href: '/docs/concepts/integrity/' },
-			{ name: 'WASM verifier', detail: 'in the browser', href: '/docs/getting-started/install/', optional: true },
-			{ name: 'RFC 3161 timestamps', href: '/docs/concepts/integrity/', optional: true },
+		available: [
+			{ name: 'Verify offline', detail: 'CLI, Python, Node', href: '/docs/examples/verify-as-an-auditor/' },
+			{ name: 'Query and tail', detail: 'by policy version', href: '/docs/examples/policy-change-review/' },
+			{ name: 'Checkpoints, receipts', detail: 'proof of one decision', href: '/docs/concepts/integrity/' },
 		],
-		soon: ['Witnesses and Rekor', 'Silent-stream alerts', 'Viewer, MCP, exports'],
+		optional: [
+			{ name: 'WASM verifier', detail: 'in the browser', href: '/docs/getting-started/install/' },
+			{ name: 'RFC 3161 timestamps', href: '/docs/concepts/integrity/' },
+		],
+		soon: ['Witnesses, Rekor', 'Silent-stream alerts', 'Viewer, MCP, exports'],
 	},
 ];
-const flows = ['intents and outcomes', 'signed, chained entries', 'stream and pinned key'];
+const rows = [
+	{ key: 'available', label: 'Available' },
+	{ key: 'optional', label: 'Optional' },
+	{ key: 'soon', label: 'Coming soon' },
+] as const;
 ---
 
-<figure class:list={['arch not-content', { wide }]} aria-label="Tenbri architecture">
-	<ul class="legend" aria-label="Legend">
-		<li><span class="mk ok" aria-hidden="true">✓</span>Available</li>
-		<li><span class="pill opt">Optional</span></li>
-		<li><span class="pill prog">In progress</span></li>
-		<li><span class="pill later">Coming soon</span></li>
-	</ul>
-	<div class="steps">
-		{steps.map((s, i) => (
+<figure class:list={['arch not-content', { wide }]} aria-label="Tenbri architecture by stage and status">
+	<!-- Matrix: wide screens -->
+	<div class="matrix" role="table" aria-label="Parts of Tenbri by stage and status">
+		<div class="corner" role="rowheader"></div>
+		{stages.map((s, i) => (
+			<div class="chev" role="columnheader" style={`--i:${i}`}>
+				<span class="n">{String(i + 1).padStart(2, '0')}</span>
+				<span class="t">{s.title}</span>
+				<span class="w">{s.who}</span>
+			</div>
+		))}
+		{rows.map((r) => (
 			<>
-				<section class="card">
-					<header>
-						<span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d={s.icon} /></svg></span>
-						<div>
-							<p class="title"><span class="num">{i + 1}</span>{s.title}</p>
-							<p class="who">{s.who}</p>
-						</div>
-					</header>
-					<ul class="items">
-						{s.items.map((it) => (
-							<li class:list={{ opt: it.optional, prog: it.progress }}>
-								<span class="mk" aria-hidden="true">{it.optional ? '+' : '✓'}</span>
-								<a href={it.href}>
+				<div class:list={['rl', r.key]} role="rowheader"><span class:list={['mk', r.key]} aria-hidden="true"></span>{r.label}</div>
+				{stages.map((s) => (
+					<div class:list={['cell', r.key]} role="cell">
+						{r.key === 'soon'
+							? s.soon.map((n) => <span class="it"><span class="nm">{n}</span></span>)
+							: (s[r.key] as Item[]).map((it) => (
+								<a class="it" href={it.href}>
 									<span class="nm">{it.name}</span>
 									{it.detail && <span class="dt">{it.detail}</span>}
-									{it.optional && <span class="pill opt">Optional</span>}
-									{it.progress && <span class="pill prog">In progress</span>}
 								</a>
-							</li>
-						))}
-					</ul>
-					<div class="soon">
-						<p class="soon-h"><span class="pill later">Coming soon</span></p>
-						<ul>{s.soon.map((n) => <li>{n}</li>)}</ul>
+							))}
 					</div>
-				</section>
-				{i < steps.length - 1 && (
-					<div class="flow" aria-hidden="true">
-						<svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m-6-6 6 6 6-6" /></svg>
-						<span>{flows[i]}</span>
-					</div>
-				)}
+				))}
 			</>
 		))}
 	</div>
+
+	<!-- Stacked: narrow screens -->
+	<ol class="stack">
+		{stages.map((s, i) => (
+			<li>
+				<p class="sh"><span class="n">{String(i + 1).padStart(2, '0')}</span>{s.title}<span class="w">{s.who}</span></p>
+				{rows.map((r) => {
+					const list = r.key === 'soon' ? s.soon.map((n) => ({ name: n }) as Item) : (s[r.key] as Item[]);
+					return list.length > 0 && (
+						<div class:list={['sr', r.key]}>
+							<p class="rl"><span class:list={['mk', r.key]} aria-hidden="true"></span>{r.label}</p>
+							<ul>{list.map((it) => <li>{it.href ? <a href={it.href}>{it.name}</a> : it.name}{it.detail && <span class="dt"> · {it.detail}</span>}</li>)}</ul>
+						</div>
+					);
+				})}
+			</li>
+		))}
+	</ol>
+
+	<figcaption>
+		<p class="take"><strong>One Rust core</strong> behind every SDK, the CLI and tenbrid. Entries are signed and chained before they reach storage; signing keys never live with the stream.</p>
+		<p class="src">Status as of 0.1.0-beta.2. Source: the <a href="https://github.com/tenbri/tenbri#status">Tenbri roadmap</a>.</p>
+	</figcaption>
 </figure>
 
 <style>
@@ -120,83 +124,92 @@ const flows = ['intents and outcomes', 'signed, chained entries', 'stream and pi
 		--a-line: var(--sl-color-gray-5, var(--rule));
 		--a-muted: var(--sl-color-gray-3, var(--ink-2));
 		--a-ink: var(--sl-color-white, var(--ink));
-		--a-card: var(--sl-color-black, var(--paper));
-		--a-panel: var(--sl-color-gray-6, var(--paper-2));
-		--a-blue: #4c8dff;
+		--a-bg: var(--sl-color-black, var(--paper));
+		--a-tint: var(--sl-color-gray-6, var(--paper-2));
 		margin: 2rem 0;
 		display: grid;
-		gap: 1rem;
+		gap: 1.1rem;
+		font-family: var(--font-body);
+		container-type: inline-size;
 	}
-	.legend {
-		list-style: none; margin: 0; padding: 0;
-		display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem 1.4rem;
-		font-size: 0.85rem; color: var(--a-muted);
-	}
-	.legend li { display: inline-flex; align-items: center; gap: 0.45rem; margin: 0; }
 
-	.mk { flex: none; display: grid; place-items: center; width: 1.25rem; height: 1.25rem; border-radius: 50%; font: 700 0.72rem/1 var(--font-body); }
-	.mk.ok, .items li .mk { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
-	.items li.opt .mk { background: color-mix(in srgb, var(--a-blue) 22%, transparent); color: var(--a-blue); font-size: 0.95rem; }
-	.items li.prog .mk { background: color-mix(in srgb, var(--amber) 22%, transparent); color: var(--amber); }
-
-	.pill {
-		flex: none;
-		display: inline-block;
-		font: 600 0.64rem/1 var(--font-mono);
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		padding: 0.3rem 0.45rem;
-		border-radius: 999px;
-	}
-	.pill.opt { background: var(--a-blue); color: #fff; }
-	.pill.prog { background: var(--amber); color: #1b1203; }
-	.pill.later { background: transparent; color: var(--a-muted); border: 1px dashed var(--a-muted); }
-
-	.steps { display: grid; gap: 0.25rem; }
-	.card {
-		border: 1px solid var(--a-line);
-		border-radius: 1rem;
-		background: var(--a-card);
+	/* Matrix */
+	.matrix {
 		display: grid;
-		grid-template-rows: auto 1fr auto;
-		overflow: hidden;
+		grid-template-columns: 7.5rem repeat(4, minmax(0, 1fr));
+		border-bottom: 1px solid var(--a-line);
 	}
-	.card header { display: flex; gap: 0.75rem; align-items: center; padding: 1rem 1.1rem 0.8rem; }
-	.ic {
-		flex: none; display: grid; place-items: center;
-		width: 2.4rem; height: 2.4rem;
-		border-radius: 0.7rem;
-		background: color-mix(in srgb, var(--stamp) 16%, transparent);
-		color: var(--stamp);
+	.corner { border-bottom: 2px solid var(--a-ink); }
+	.chev {
+		position: relative;
+		display: grid; gap: 0.15rem; align-content: center;
+		min-height: 4.4rem;
+		padding: 0.7rem 1.6rem 0.7rem calc(1.2rem + 0.4rem * var(--i, 0) * 0);
+		margin-right: -0.7rem;
+		background: var(--a-ink);
+		color: var(--a-bg);
+		clip-path: polygon(0 0, calc(100% - 0.9rem) 0, 100% 50%, calc(100% - 0.9rem) 100%, 0 100%, 0.9rem 50%);
 	}
-	.title { margin: 0; display: flex; align-items: center; gap: 0.45rem; font: 750 1.08rem/1.2 var(--font-display); color: var(--a-ink); }
-	.num { font: 600 0.75rem/1 var(--font-mono); color: var(--stamp); }
-	.who { margin: 0.15rem 0 0; font-size: 0.84rem; color: var(--a-muted); }
+	.chev:nth-child(2) { clip-path: polygon(0 0, calc(100% - 0.9rem) 0, 100% 50%, calc(100% - 0.9rem) 100%, 0 100%); padding-left: 0.9rem; }
+	.chev:nth-child(n + 3) { padding-left: 1.6rem; }
+	.chev:nth-child(5) { margin-right: 0; }
+	.chev .n { font: 600 0.7rem/1 var(--font-mono); letter-spacing: 0.08em; color: var(--stamp); }
+	.chev .t { font: 750 1rem/1.15 var(--font-display); letter-spacing: -0.01em; }
+	.chev .w { font-size: 0.75rem; line-height: 1.3; opacity: 0.7; }
 
-	.items { list-style: none; margin: 0; padding: 0 1.1rem 1rem; display: grid; gap: 0.55rem; align-content: start; }
-	.items li { margin: 0; display: flex; align-items: flex-start; gap: 0.6rem; }
-	.items li .mk { margin-top: 0.1rem; }
-	.items a { flex: 1; min-width: 0; display: grid; text-decoration: none; color: var(--a-ink); }
-	.items a:hover .nm { color: var(--stamp); }
-	.nm { font-weight: 600; font-size: 0.92rem; line-height: 1.35; }
-	.dt { font-size: 0.8rem; line-height: 1.35; color: var(--a-muted); }
-	.items .pill { justify-self: start; margin-top: 0.3rem; }
-
-	.soon { background: var(--a-panel); border-top: 1px dashed var(--a-line); padding: 0.75rem 1.1rem 0.9rem; }
-	.soon-h { margin: 0 0 0.45rem; }
-	.soon ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
-	.soon li { margin: 0; font-size: 0.82rem; color: var(--a-muted); }
-	.soon li::before { content: '○ '; }
-
-	.flow { display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.35rem 0; color: var(--stamp); }
-	.flow span { font: 500 0.75rem/1 var(--font-mono); color: var(--a-muted); }
-
-	/* Four across on the landing page */
-	@media (min-width: 1100px) {
-		.arch.wide { margin: 0; }
-		.arch.wide .steps { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 0; align-items: stretch; }
-		.arch.wide .flow { flex-direction: column; padding: 0 0.3rem; width: 4.6rem; }
-		.arch.wide .flow svg { rotate: -90deg; }
-		.arch.wide .flow span { text-align: center; font-size: 0.66rem; line-height: 1.3; }
+	.rl {
+		display: flex; align-items: flex-start; gap: 0.5rem;
+		padding: 0.95rem 0.75rem 0.95rem 0;
+		font: 600 0.7rem/1.3 var(--font-mono);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--a-ink);
+		border-top: 1px solid var(--a-line);
 	}
+	.cell {
+		display: grid; align-content: start; gap: 0.65rem;
+		padding: 0.95rem 0.9rem;
+		border-top: 1px solid var(--a-line);
+		border-left: 1px solid var(--a-line);
+	}
+	.cell.optional { background: color-mix(in srgb, var(--a-tint) 55%, transparent); }
+	.rl.optional { background: color-mix(in srgb, var(--a-tint) 55%, transparent); padding-left: 0.5rem; margin-left: -0.5rem; }
+	.cell.soon .nm, .rl.soon { color: var(--a-muted); }
+	.cell.soon .nm { font-weight: 500; }
+
+	.mk { flex: none; width: 0.6rem; height: 0.6rem; margin-top: 0.12rem; }
+	.mk.available { background: var(--a-ink); }
+	.mk.optional { border: 1.5px solid var(--a-ink); }
+	.mk.soon { border: 1.5px dashed var(--a-muted); border-radius: 50%; }
+
+	.it { display: grid; gap: 0.05rem; text-decoration: none; color: var(--a-ink); }
+	a.it:hover .nm { text-decoration: underline; text-decoration-color: var(--stamp); text-underline-offset: 3px; }
+	.nm { font-weight: 600; font-size: 0.86rem; line-height: 1.3; }
+	.dt { font-size: 0.75rem; line-height: 1.3; color: var(--a-muted); }
+
+	figcaption { display: grid; gap: 0.4rem; }
+	.take { margin: 0; padding-left: 0.8rem; border-left: 3px solid var(--stamp); font-size: 0.92rem; color: var(--a-ink); }
+	.take strong { font-weight: 700; }
+	.src { margin: 0; font-size: 0.72rem; color: var(--a-muted); }
+	.src a { color: inherit; }
+
+	/* Stacked list for narrow screens */
+	.stack { display: none; list-style: none; margin: 0; padding: 0; gap: 0.75rem; }
+	.stack > li { margin: 0; border: 1px solid var(--a-line); border-radius: 0.6rem; overflow: hidden; }
+	.sh { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.6rem; padding: 0.7rem 0.9rem; background: var(--a-ink); color: var(--a-bg); font: 750 1rem/1.2 var(--font-display); }
+	.sh .n { font: 600 0.7rem/1 var(--font-mono); color: var(--stamp); }
+	.sh .w { flex-basis: 100%; font: 400 0.75rem/1.3 var(--font-body); opacity: 0.7; }
+	.sr { padding: 0.6rem 0.9rem 0.7rem; border-top: 1px solid var(--a-line); }
+	.sr.optional { background: color-mix(in srgb, var(--a-tint) 55%, transparent); }
+	.sr .rl { border: 0; padding: 0 0 0.35rem; }
+	.sr ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; font-size: 0.86rem; }
+	.sr li { margin: 0; }
+	.sr a { color: var(--a-ink); font-weight: 600; text-decoration: none; }
+	.sr.soon li { color: var(--a-muted); }
+
+	@container (max-width: 820px) {
+		.matrix { display: none; }
+		.stack { display: grid; }
+	}
+	.arch.wide { margin: 0; }
 </style>
