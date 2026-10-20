@@ -1,9 +1,14 @@
 ---
-import { createHash } from 'node:crypto';
 import { Image } from 'astro:assets';
 import mascot from '../assets/mascot.webp';
 import Site from '../layouts/Site.astro';
 import CodeWindow from '../components/CodeWindow.astro';
+import TerminalPlayer from '../components/TerminalPlayer.astro';
+import claudeIcon from '@lobehub/icons-static-svg/icons/claude-color.svg?raw';
+import openaiIcon from '@lobehub/icons-static-svg/icons/openai.svg?raw';
+import langgraphIcon from '@lobehub/icons-static-svg/icons/langgraph-color.svg?raw';
+import langchainIcon from '@lobehub/icons-static-svg/icons/langchain-color.svg?raw';
+import { siPython, siTypescript } from 'simple-icons';
 
 const title = 'Tenbri: audit trail for AI agents';
 const description =
@@ -153,30 +158,26 @@ $ curl -X POST https://tenbrid.internal:7070/v1/streams/support/intents \\
 	},
 ];
 
-// The tamper demo: simplified entries; hashes are real, SHA-256(0x00 || line) as in the spec.
-const leaf = (line: string) =>
-	'sha256:' + createHash('sha256').update(Buffer.concat([Buffer.from([0]), Buffer.from(line)])).digest('hex');
-const base = [
-	{ seq: 1, kind: 'approval', by: { kind: 'person', id: 'alice' }, action: { type: 'issue_refund', target: 'stripe:charge/ch_81f2' } },
-	{ seq: 2, kind: 'decision', phase: 'intent', principal: { kind: 'agent', id: 'support-assistant' }, action: { type: 'issue_refund', target: 'stripe:charge/ch_81f2' }, inputs: [{ ref: 'policy:refund', version: '14' }], ext: { refund: { amount: 4200 } } },
-	{ seq: 3, kind: 'decision', phase: 'outcome', principal: { kind: 'agent', id: 'support-assistant' }, action: { type: 'issue_refund' }, status: 'ok' },
-];
-let prev: string | null = null;
-const chain = base.map((e) => {
-	const entry = { ...e, prev };
-	const hash = leaf(JSON.stringify(entry));
-	prev = hash;
-	return { entry, hash };
-});
-const short = (h: string | null) => (h ? h.slice(0, 15) + '…' + h.slice(-4) : 'none (genesis)');
 
+const svg = (path: string, hex: string) =>
+	`<svg viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true"><path fill="#${hex}" d="${path}"/></svg>`;
+const icon = (raw: string) => raw.replace(/<title>.*?<\/title>/, '').replace('<svg ', '<svg aria-hidden="true" ');
 const frameworks = [
-	['Claude Agent SDK', '/docs/adapters/claude-agent-sdk/'],
-	['OpenAI Agents SDK', '/docs/adapters/openai-agents/'],
-	['LangGraph', '/docs/adapters/langgraph/'],
-	['LangChain', '/docs/adapters/langgraph/'],
-	['Any Python or TypeScript function', '/docs/getting-started/quickstart/'],
-	['REST and gRPC', '/docs/reference/api/'],
+	{ name: 'Claude Agent SDK', href: '/docs/adapters/claude-agent-sdk/', icon: icon(claudeIcon) },
+	{ name: 'OpenAI Agents SDK', href: '/docs/adapters/openai-agents/', icon: icon(openaiIcon) },
+	{ name: 'LangGraph', href: '/docs/adapters/langgraph/', icon: icon(langgraphIcon) },
+	{ name: 'LangChain', href: '/docs/adapters/langgraph/', icon: icon(langchainIcon) },
+	{ name: 'Any Python function', href: '/docs/getting-started/quickstart/', icon: svg(siPython.path, siPython.hex) },
+	{ name: 'Any TypeScript function', href: '/docs/getting-started/quickstart/', icon: svg(siTypescript.path, siTypescript.hex) },
+];
+
+// The recorded session: real output from the quickstart run, hashes shortened.
+const session = [
+	{ note: 'refund.py: @tenbri.decision on a refund function, called three times', cmd: 'TENBRI_STREAM=audit/support TENBRI_AGENT=agent:support python refund.py', out: 'pin this: sha256:18c44ddcc1b123d3…f94edc\nok: re_123\nrefused: over the 500 EUR ceiling\nerror: nothing to refund' },
+	{ note: 'every call is an intent and an outcome', cmd: "tenbri tail audit/support -n 6 --no-follow | jq -c '{seq, phase, status, target: .action.target}'", out: '{"seq":3,"phase":"intent","status":null,"target":"stripe:ch_3PqX"}\n{"seq":4,"phase":"outcome","status":"ok","target":"stripe:ch_3PqX"}\n{"seq":5,"phase":"intent","status":null,"target":"stripe:ch_9ZzY"}\n{"seq":6,"phase":"outcome","status":"refused","target":"stripe:ch_9ZzY"}\n{"seq":7,"phase":"intent","status":null,"target":"stripe:ch_0"}\n{"seq":8,"phase":"outcome","status":"error","target":"stripe:ch_0"}' },
+	{ note: 'anyone can verify it, offline, against the pinned key', cmd: 'tenbri verify audit/support --key sha256:18c44ddc…', out: 'verified 8 entries, stream tnb1:18c44ddcc1b123d3…7b00, pinned to sha256:18c44ddc…' },
+	{ note: 'someone rewrites history: one refund now points elsewhere', cmd: "sed -i '' 's/ch_3PqX/ch_3PqZ/' audit/support/batches/000000000003.jsonl" },
+	{ cmd: 'tenbri verify audit/support --key sha256:18c44ddc…', out: 'broken at seq 3: bad_signature: the signature does not verify\n2 entries verified before it, stream tnb1:18c44ddcc1b123d3…7b00' },
 ];
 
 const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', 'SOC 2', 'ISO/IEC 27001', 'ISO/IEC 42001', 'NIST AI RMF'];
@@ -241,75 +242,35 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 					<CodeWindow files={quick} label="Instrument an agent" />
 				</div>
 				<div class="fw">
-					{frameworks.map(([name, href]) => <a href={href}>{name}</a>)}
+					{frameworks.map((f) => <a href={f.href}><span class="fi" set:html={f.icon} />{f.name}</a>)}
 				</div>
 			</div>
 		</section>
 
 		<section class="band alt" aria-labelledby="demo-title">
 			<div class="wrap section-head center">
-				<p class="eyebrow">Try it</p>
-				<h2 id="demo-title">Change one number. Watch the chain break.</h2>
-				<p class="sub">A refund an agent issued after Alice approved it. Edit the amount; hashes are recomputed in your browser with SHA-256, as the spec does.</p>
+				<p class="eyebrow">See it run</p>
+				<h2 id="demo-title">Record, verify, tamper, get caught</h2>
+				<p class="sub">A refund function decorated with <code>@tenbri.decision</code>, called three times. Then someone edits one byte on disk. This is the real output, with hashes shortened.</p>
 			</div>
+			<div class="wrap narrow">
+				<TerminalPlayer title="tenbri quickstart" steps={session} />
+			</div>
+		</section>
 
-			<div class="wrap">
-				<div class="chain" id="chain" data-state="ok">
-					<script type="application/json" id="chain-data" set:html={JSON.stringify(chain.map((c) => c.entry))} />
-					<article class="entry">
-						<header><span>seq 1</span><span class="kind">approval</span></header>
-						<dl>
-							<dt>by</dt><dd>alice · person</dd>
-							<dt>action</dt><dd>issue_refund</dd>
-							<dt>target</dt><dd>stripe:charge/ch_81f2</dd>
-						</dl>
-						<footer>
-							<div><span>prev</span><code>{short(null)}</code></div>
-							<div><span>hash</span><code>{short(chain[0].hash)}</code></div>
-							<div class="sig ok"><span>sig</span><code>valid</code></div>
-						</footer>
-					</article>
-					<div class="link" aria-hidden="true"><i></i></div>
-					<article class="entry target">
-						<header><span>seq 2</span><span class="kind">decision · intent</span></header>
-						<dl>
-							<dt>agent</dt><dd>support-assistant</dd>
-							<dt>action</dt><dd>issue_refund</dd>
-							<dt>inputs</dt><dd>policy:refund @14</dd>
-							<dt><label for="amount">amount</label></dt>
-							<dd class="amount"><input id="amount" type="number" inputmode="numeric" value="4200" min="0" step="100" aria-describedby="demo-hint" /><span>cents</span></dd>
-						</dl>
-						<footer>
-							<div><span>prev</span><code>{short(chain[0].hash)}</code></div>
-							<div><span>hash</span><code id="hash-2">{short(chain[1].hash)}</code></div>
-							<div class="sig ok" id="sig-2"><span>sig</span><code>valid</code></div>
-						</footer>
-					</article>
-					<div class="link" id="link-3" aria-hidden="true"><i></i></div>
-					<article class="entry">
-						<header><span>seq 3</span><span class="kind">decision · outcome</span></header>
-						<dl>
-							<dt>agent</dt><dd>support-assistant</dd>
-							<dt>intent</dt><dd>seq 2</dd>
-							<dt>status</dt><dd>ok</dd>
-						</dl>
-						<footer>
-							<div class="prev-3"><span>prev</span><code>{short(chain[1].hash)}</code></div>
-							<div><span>hash</span><code>{short(chain[2].hash)}</code></div>
-							<div class="sig ok"><span>sig</span><code>valid</code></div>
-						</footer>
-					</article>
+		<section class="band" aria-labelledby="blog-title">
+			<div class="wrap story">
+				<div class="story-copy">
+					<p class="eyebrow">From the blog · Incident analysis</p>
+					<h2 id="blog-title">Five days to “it was us”</h2>
+					<p class="sub">In July 2026, OpenAI agents broke out of an evaluation sandbox and attacked Hugging Face. Attribution took five days. What a signed record of every agent decision would have changed, and what it would not.</p>
+					<a class="btn primary" href="/blog/five-days-to-it-was-us/">Read the analysis <span aria-hidden="true">→</span></a>
 				</div>
-
-				<div class="demo-foot">
-					<pre class="term" aria-live="polite" id="verify-out"><span class="p">$</span> tenbri verify ./refunds --key sha256:9c1e…
-<span class="ok">verified 3 entries</span>, stream tnb1:1702…b7d8, pinned to sha256:9c1e…</pre>
-					<div class="demo-actions">
-						<button type="button" class="btn" id="tamper">Make it 42 000</button>
-						<button type="button" class="btn" id="restore" disabled>Restore</button>
-						<p id="demo-hint">Signatures in this demo are simulated; hashes are real.</p>
-					</div>
-				</div>
+				<ol class="story-stats">
+					<li><strong>~17,600</strong><span>agent actions Hugging Face recovered from its own logs</span></li>
+					<li><strong>5 days</strong><span>from the public disclosure to “it was us”</span></li>
+					<li><strong>1 query</strong><span>with a Tenbri record: <code>tenbri query --target-domain</code>, on the roadmap</span></li>
+				</ol>
 			</div>
 		</section>
 
@@ -378,44 +339,6 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 			setTimeout(() => (icopy.textContent = 'copy'), 1500);
 		});
 
-		// Tamper demo
-		const entries = JSON.parse(document.getElementById('chain-data')!.textContent!);
-		const original = entries[1].ext.refund.amount as number;
-		const chainEl = document.getElementById('chain')!;
-		const amount = document.getElementById('amount') as HTMLInputElement;
-		const out = document.getElementById('verify-out')!;
-		const restore = document.getElementById('restore') as HTMLButtonElement;
-		const short = (h: string) => h.slice(0, 15) + '…' + h.slice(-4);
-		const leaf = async (line: string) => {
-			const bytes = new Uint8Array([0, ...new TextEncoder().encode(line)]);
-			const d = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-			return 'sha256:' + [...d].map((b) => b.toString(16).padStart(2, '0')).join('');
-		};
-		const head = '<span class="p">$</span> tenbri verify ./refunds --key sha256:9c1e…\n';
-		const render = async () => {
-			const value = Number(amount.value);
-			const e = structuredClone(entries[1]);
-			e.ext.refund.amount = value;
-			document.getElementById('hash-2')!.textContent = short(await leaf(JSON.stringify(e)));
-			const broken = value !== original;
-			chainEl.dataset.state = broken ? 'broken' : 'ok';
-			const sig = document.getElementById('sig-2')!;
-			sig.className = 'sig ' + (broken ? 'bad' : 'ok');
-			sig.querySelector('code')!.textContent = broken ? 'invalid' : 'valid';
-			restore.disabled = !broken;
-			out.innerHTML = broken
-				? head + '<span class="bad">broken at seq 2: bad_signature</span>\n1 entries verified before it, stream tnb1:1702…b7d8'
-				: head + '<span class="ok">verified 3 entries</span>, stream tnb1:1702…b7d8, pinned to sha256:9c1e…';
-		};
-		amount.addEventListener('input', render);
-		document.getElementById('tamper')!.addEventListener('click', () => {
-			amount.value = '42000';
-			render();
-		});
-		restore.addEventListener('click', () => {
-			amount.value = String(original);
-			render();
-		});
 	</script>
 </Site>
 
@@ -563,72 +486,26 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	.more { font-weight: 600; color: var(--stamp); text-decoration: none; }
 	.more:hover { text-decoration: underline; text-underline-offset: 4px; }
 
-	/* Demo */
-	.chain {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) 2.5rem minmax(0, 1fr) 2.5rem minmax(0, 1fr);
-		padding: clamp(1rem, 2.5vw, 1.75rem);
-		background: var(--paper);
+	.fw a { display: inline-flex; align-items: center; gap: 0.5rem; }
+	.fi { display: inline-flex; font-size: 1.15rem; }
+	.fi :global(svg) { width: 1em; height: 1em; }
+	.sub code { font: 0.9em var(--font-mono); color: var(--ink); }
+
+	/* Blog highlight */
+	.story { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: clamp(2rem, 5vw, 4rem); align-items: center; }
+	.story-copy { display: grid; gap: 1.1rem; justify-items: start; }
+	.story-stats { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+	.story-stats li {
+		display: grid; gap: 0.3rem;
+		padding: 1.1rem 1.3rem;
 		border: 1px solid var(--rule);
-		border-radius: 1rem;
-	}
-	.entry {
+		border-radius: 0.85rem;
 		background: var(--paper-2);
-		border: 1px solid var(--rule);
-		border-radius: 0.7rem;
-		padding: 1rem 1.1rem 0.9rem;
-		font: 400 0.8rem/1.5 var(--font-mono);
-		display: grid; grid-template-rows: auto 1fr auto; gap: 0.75rem;
-		min-width: 0;
-		transition: border-color 0.2s ease, box-shadow 0.2s ease;
 	}
-	.entry.target { border-color: var(--stamp); box-shadow: 0 0 0 3px color-mix(in srgb, var(--stamp) 18%, transparent); }
-	.entry header { display: flex; justify-content: space-between; gap: 0.5rem; color: var(--ink-2); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; }
-	.entry .kind { color: var(--ink); }
-	.entry dl { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); gap: 0.3rem 0.6rem; margin: 0; align-content: start; }
-	.entry dt { color: var(--ink-2); }
-	.entry dd { margin: 0; overflow-wrap: anywhere; }
-	.amount { display: flex; align-items: center; gap: 0.4rem; }
-	.amount input {
-		width: 6.5rem;
-		font: 500 0.85rem/1 var(--font-mono);
-		padding: 0.3rem 0.45rem;
-		border: 1px solid var(--rule);
-		border-radius: 0.35rem;
-		background: var(--paper);
-		color: var(--stamp);
-		font-variant-numeric: tabular-nums;
-	}
-	.amount span { color: var(--ink-2); font-size: 0.72rem; }
-	.entry footer { display: grid; gap: 0.15rem; padding-top: 0.6rem; border-top: 1px dashed var(--rule); font-size: 0.72rem; color: var(--ink-2); }
-	.entry footer span { display: inline-block; width: 2.6rem; color: var(--ink); }
-	.entry footer code { overflow-wrap: anywhere; }
-	.sig.ok code { color: var(--ok); }
-	.sig.bad code { color: var(--bad); font-weight: 500; }
-	.link { position: relative; display: grid; place-items: center; }
-	.link i { display: block; width: 100%; height: 2px; background: var(--ok); position: relative; }
-	.link i::after { content: ''; position: absolute; right: -1px; top: -4px; border: 5px solid transparent; border-left-color: var(--ok); border-right: 0; }
-	.link::after { content: '✓'; position: absolute; top: calc(50% - 1.6rem); font: 600 0.8rem/1 var(--font-mono); color: var(--ok); }
-	.chain[data-state='broken'] .entry.target { border-color: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 20%, transparent); }
-	.chain[data-state='broken'] #link-3 i { background: repeating-linear-gradient(90deg, var(--bad) 0 5px, transparent 5px 9px); }
-	.chain[data-state='broken'] #link-3 i::after { border-left-color: var(--bad); }
-	.chain[data-state='broken'] #link-3::after { content: '✗'; color: var(--bad); }
-	.chain[data-state='broken'] .prev-3 code { color: var(--bad); text-decoration: line-through; }
-	.demo-foot { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 1.25rem; align-items: start; margin-top: 1.25rem; }
-	.demo-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
-	.demo-actions p { flex-basis: 100%; color: var(--ink-2); font-size: 0.85rem; }
-	.term {
-		margin: 0;
-		background: #0d1117; color: #e6edf3;
-		border: 1px solid #262c36;
-		border-radius: 0.8rem;
-		padding: 1.1rem 1.25rem;
-		font: 0.82rem/1.65 var(--font-mono);
-		overflow-x: auto;
-	}
-	.term :global(.p) { color: #ff8a4f; }
-	.term :global(.ok) { color: #7ee2a8; font-weight: 500; }
-	.term :global(.bad) { color: #ff7b72; font-weight: 500; }
+	.story-stats strong { font: 800 clamp(1.6rem, 3vw, 2.2rem)/1 var(--font-display); letter-spacing: -0.03em; color: var(--ink); }
+	.story-stats li:last-child strong { color: var(--stamp); }
+	.story-stats span { color: var(--ink-2); font-size: 0.98rem; }
+	.story-stats code { font: 0.85em var(--font-mono); color: var(--ink); }
 
 	/* Compliance */
 	.regs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2.5rem; align-items: center; }
@@ -652,17 +529,9 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	@media (max-width: 900px) {
 		.row, .regs { grid-template-columns: minmax(0, 1fr); }
 		.row.flip .row-code { order: 0; }
-		.demo-foot { grid-template-columns: minmax(0, 1fr); }
-	}
-	@media (max-width: 760px) {
-		.chain { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 2.25rem auto 2.25rem auto; }
-		.link i { width: 2px; height: 100%; }
-		.link i::after { right: -4px; top: auto; bottom: -1px; border: 5px solid transparent; border-top-color: var(--ok); border-bottom: 0; }
-		.chain[data-state='broken'] #link-3 i { background: repeating-linear-gradient(180deg, var(--bad) 0 5px, transparent 5px 9px); }
-		.chain[data-state='broken'] #link-3 i::after { border-left-color: transparent; border-top-color: var(--bad); }
-		.link::after { top: auto; left: calc(50% + 0.6rem); }
+		.story { grid-template-columns: minmax(0, 1fr); }
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.btn, .hb, .entry { transition: none; }
+		.btn, .hb { transition: none; }
 	}
 </style>

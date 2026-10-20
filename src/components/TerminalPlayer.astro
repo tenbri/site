@@ -1,0 +1,133 @@
+---
+// A lightweight asciinema-style recording: commands are typed, outputs appear line by line.
+// The full transcript is in the HTML, so the page reads complete without JavaScript.
+interface Step {
+	cmd: string;
+	out?: string;
+	note?: string;
+}
+interface Props {
+	title: string;
+	steps: Step[];
+}
+const { title, steps } = Astro.props;
+const tone = (line: string) =>
+	/^(verified|ok:)/.test(line) ? 'ok' : /^(broken|error:|refused:)/.test(line) ? 'bad' : /^pin this/.test(line) ? 'hl' : '';
+---
+
+<div class="tp" data-tp>
+	<div class="tp-bar">
+		<span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+		<span class="tp-title">{title}</span>
+		<button type="button" class="tp-replay" hidden>
+			<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" /></svg>
+			Replay
+		</button>
+	</div>
+	<div class="tp-screen" role="img" aria-label={`Recorded terminal session: ${title}`}>{steps.map((s) => (
+		<div class="tp-step">{s.note && <div class="tp-note"># {s.note}</div>}<div class="tp-cmd"><span class="pr">$</span> <span class="typed">{s.cmd}</span></div>{s.out && s.out.split('\n').map((l) => <div class:list={['tp-out', tone(l)]}>{l}</div>)}</div>
+	))}<span class="tp-cursor" aria-hidden="true"></span></div>
+</div>
+
+<script>
+	const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+	const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+	for (const tp of document.querySelectorAll<HTMLElement>('[data-tp]')) {
+		const screen = tp.querySelector<HTMLElement>('.tp-screen')!;
+		const replay = tp.querySelector<HTMLButtonElement>('.tp-replay')!;
+		const steps = [...screen.querySelectorAll<HTMLElement>('.tp-step')];
+		let run = 0;
+
+		const play = async () => {
+			const me = ++run;
+			replay.hidden = true;
+			// Hide everything, keep the typed text to retype it.
+			const typed = steps.map((s) => s.querySelector<HTMLElement>('.typed')!.textContent ?? '');
+			for (const s of steps) {
+				s.hidden = true;
+				for (const o of s.querySelectorAll<HTMLElement>('.tp-out')) o.hidden = true;
+			}
+			for (const [i, s] of steps.entries()) {
+				if (me !== run) return;
+				s.hidden = false;
+				const t = s.querySelector<HTMLElement>('.typed')!;
+				t.textContent = '';
+				for (const ch of typed[i]) {
+					if (me !== run) return;
+					t.textContent += ch;
+					await sleep(ch === ' ' ? 18 : 28);
+				}
+				await sleep(350);
+				for (const o of s.querySelectorAll<HTMLElement>('.tp-out')) {
+					if (me !== run) return;
+					o.hidden = false;
+					screen.scrollTop = screen.scrollHeight;
+					await sleep(110);
+				}
+				screen.scrollTop = screen.scrollHeight;
+				await sleep(900);
+			}
+			replay.hidden = false;
+		};
+
+		replay.addEventListener('click', play);
+		if (reduce) {
+			replay.hidden = true;
+			continue;
+		}
+		new IntersectionObserver((seen, obs) => {
+			if (seen.some((e) => e.isIntersecting)) {
+				obs.disconnect();
+				play();
+			}
+		}, { threshold: 0.4 }).observe(tp);
+	}
+</script>
+
+<style>
+	.tp {
+		border-radius: 0.85rem;
+		background: #0d1117;
+		border: 1px solid #262c36;
+		box-shadow: 0 30px 80px -30px rgb(0 0 0 / 0.7);
+		overflow: hidden;
+		text-align: left;
+	}
+	.tp-bar { display: flex; align-items: center; gap: 0.9rem; padding: 0.6rem 0.75rem; background: #151b23; border-bottom: 1px solid #262c36; }
+	.lights { display: flex; gap: 6px; flex: none; }
+	.lights i { width: 11px; height: 11px; border-radius: 50%; background: #ff5f57; }
+	.lights i:nth-child(2) { background: #febc2e; }
+	.lights i:nth-child(3) { background: #28c840; }
+	.tp-title { flex: 1; min-width: 0; text-align: center; font: 500 0.78rem/1 var(--font-mono); color: #8b949e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.tp-replay {
+		display: inline-flex; align-items: center; gap: 0.35rem;
+		font: 500 0.74rem/1 var(--font-mono);
+		padding: 0.35rem 0.55rem;
+		border: 1px solid #30363d; border-radius: 0.35rem;
+		background: #21262d; color: #c9d1d9;
+		cursor: pointer;
+	}
+	.tp-replay[hidden] { display: none; }
+	.tp-screen {
+		margin: 0;
+		height: 26rem;
+		overflow: auto;
+		padding: 1.1rem 1.25rem 1.4rem;
+		font: 0.84rem/1.7 var(--font-mono);
+		color: #c9d1d9;
+		scroll-behavior: smooth;
+	}
+	.tp-step + .tp-step { margin-top: 0.9rem; }
+	.tp-step[hidden], .tp-out[hidden] { display: none; }
+	.tp-note, .tp-cmd, .tp-out { white-space: pre; }
+	.tp-note { color: #6e7681; }
+	.tp-cmd { color: #e6edf3; }
+	.pr { color: #7ee2a8; }
+	.tp-out.ok { color: #7ee2a8; }
+	.tp-out.bad { color: #ff7b72; }
+	.tp-out.hl { color: #ffa657; }
+	.tp-cursor { display: inline-block; width: 0.55em; height: 1.1em; background: #e6edf3; vertical-align: text-bottom; animation: blink 1s steps(1) infinite; }
+	@keyframes blink { 50% { opacity: 0; } }
+	@media (prefers-reduced-motion: reduce) { .tp-cursor { animation: none; } }
+</style>

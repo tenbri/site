@@ -1,6 +1,6 @@
 ---
 title: Planned adapters
-description: "The agent frameworks Tenbri plans adapters for, and how to record a tool call from any framework today, with the CLI, Python, TypeScript or REST."
+description: "The agent frameworks Tenbri plans adapters for, and how to record a tool call from any framework today: @tenbri.decision and decision() in code, or the CLI and REST."
 sidebar:
   order: 4
 ---
@@ -29,17 +29,146 @@ shipped adapters are **Stable**: covered by the format promise and the 0.x API p
 
 ## Use Tenbri from any framework today
 
-An adapter only automates what you can do by hand. Find the place where your agent runs its tools
-(a tool wrapper, a middleware, a callback) and do what the adapters do:
+An adapter only automates what you can do yourself. Find your tool functions, the ones the agent
+calls, and record each call as a decision: `@tenbri.decision` in Python, `decision({...}, fn)` in
+TypeScript. Each call then writes:
 
-1. Before the tool runs, write an **intent**: `principal` is the agent, `action.type` the tool,
-   `action.target` what it acts on. If the write fails, do not run the tool.
-2. After it runs, write the **outcome** for that intent: `ok`, `error`, or `refused` if a person or
-   a rule stopped it.
-3. If a person approved the call, write an **approval** first and name it from the decision.
+1. Before the function runs, an **intent**: `principal` is the agent, `action.type` the action,
+   `action.target` what it acts on. If the intent cannot be written, the function does not run.
+2. After it runs, the **outcome**: `ok`, `refused` when it raises `tenbri.Refused` (throws
+   `Refused`), `error` for any other exception (which propagates), `unknown` when cancelled
+   (an `AbortError` in TypeScript).
 
-Here is a refund tool, `issue_refund`, wrapped by hand four ways. Each one records the same intent
-and outcome.
+Here is a refund tool, `issue_refund`, recorded that way. `tenbri.init()` opens the stream, as for
+the adapters (from `TENBRI_STREAM` and `TENBRI_AGENT` when you pass nothing), and
+`tenbri.agent()` (`agent()`) says who acts for a block of code:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="wrap.py"
+import tenbri
+
+tenbri.init("./audit", agent="agent:support")  # or TENBRI_STREAM and TENBRI_AGENT
+
+POLICY = "Refunds up to 500 EUR are automatic."
+
+
+@tenbri.decision(
+    "issue_refund",
+    target="stripe:{charge}",              # a template of the arguments
+    policy="policy:refund@14",             # the rule that allowed it
+    inputs=[("policy:refund", "14", POLICY)],  # what it relied on, by keyed digest
+)
+def issue_refund(charge: str, amount: int) -> str:
+    if amount > 500:
+        raise tenbri.Refused("over the refund ceiling")  # recorded as refused
+    return f"refunded {amount} EUR of {charge}"  # your tool
+
+
+print(issue_refund("ch_123", 30))
+with tenbri.agent("agent:billing"):  # who acts, for this block
+    try:
+        issue_refund("ch_456", 900)
+    except tenbri.Refused as e:
+        print("refused:", e)
+
+log = tenbri.default()
+for m in log.query(action="issue_refund"):
+    e = m.entry
+    print(e["seq"], e["phase"], e.get("status", ""), e["principal"]["id"], e["action"]["target"])
+print("verified:", log.verify(log.fingerprint).ok)
+```
+
+```sh
+python wrap.py
+```
+
+```text
+refunded 30 EUR of ch_123
+refused: over the refund ceiling
+3 intent  support stripe:ch_123
+4 outcome ok support stripe:ch_123
+5 intent  billing stripe:ch_456
+6 outcome refused billing stripe:ch_456
+verified: True
+```
+
+The decorator works the same on `async def` functions. `target` and `subject` are templates of the
+function's arguments (`"stripe:{charge}"`, `"{order.id}"`) or functions of them; `inputs` can be a
+function of the arguments too. Who acts is `principal=`, else the innermost
+`with tenbri.agent(...)`, else `init(agent=...)` or `TENBRI_AGENT`: with none, the call raises
+`InvalidRequestError: no principal`.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="wrap.ts"
+import { Refused, agent, decision, init } from 'tenbri'
+
+const log = await init({ stream: './audit', agent: 'agent:support' }) // or TENBRI_STREAM and TENBRI_AGENT
+
+const POLICY = 'Refunds up to 500 EUR are automatic.'
+
+const issueRefund = decision(
+  {
+    action: 'issue_refund',
+    target: 'stripe:{charge}', // a template of the first argument
+    policy: 'policy:refund@14', // the rule that allowed it
+    inputs: [{ ref: 'policy:refund', version: '14', content: POLICY }], // what it relied on, by keyed digest
+  },
+  async ({ charge, amount }: { charge: string; amount: number }) => {
+    if (amount > 500) throw new Refused('over the refund ceiling') // recorded as refused
+    return `refunded ${amount} EUR of ${charge}` // your tool
+  },
+)
+
+console.log(await issueRefund({ charge: 'ch_123', amount: 30 }))
+// who acts, for what the callback runs
+await agent('agent:billing', () => issueRefund({ charge: 'ch_456', amount: 900 })).catch((e) => console.log('refused:', e.message))
+
+for (const { entry: e } of await log.query({ action: 'issue_refund' })) {
+  console.log(e.seq, e.phase, e.status ?? '', e.principal?.id, e.action?.target)
+}
+console.log('verified:', (await log.verify(log.fingerprint!)).ok)
+```
+
+```sh
+node wrap.ts
+```
+
+```text
+refunded 30 EUR of ch_123
+refused: over the refund ceiling
+3 intent  support stripe:ch_123
+4 outcome ok support stripe:ch_123
+5 intent  billing stripe:ch_456
+6 outcome refused billing stripe:ch_456
+verified: true
+```
+
+`decision()` returns an async function. `target` and `subject` are templates of the arguments
+(`'stripe:{charge}'` reads the first argument's `charge`, `'{1}'` is the second argument) or
+functions of them. Who acts is `principal`, else the innermost `agent(...)` scope, else
+`init({ agent })` or `TENBRI_AGENT`.
+
+</TabItem>
+</Tabs>
+
+The first intent, as stored (signatures and hashes shortened). The policy's text is pinned by its
+keyed digest, keyed by the stream's local key store, so no secret goes in your code:
+
+```json
+{"action":{"target":"stripe:ch_123","type":"issue_refund"},"durability":"local","id":"01M5D1B9FZC4VQKEK17YG8N8SB","inputs":[{"digest":"hmac-sha256:ec9ac64d…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent","prev":"sha256:ab5571a7…","principal":{"id":"support","kind":"agent"},"rule":{"ref":"policy:refund","result":"allow","version":"14"},"seq":3,"sig":"ed25519:d4e3c10e…","signer":"sess:2026-10-20:acfd88f7edf2","source":"sdk","stream":"tnb1:9ad7a1625fbfd405ed5ae0addf924507","ts":"2026-10-20T16:12:10.627Z","v":1}
+```
+
+If a person approved the call, write an `approval` entry first and name it from the decision, as
+the adapters do. For full control (several streams, your own drafts), the stream itself has
+`intent`, `outcome` and `append`: see the bindings' READMEs.
+
+### From a shell or another language
+
+Without a binding, write the same intent and outcome with the CLI, or through `tenbrid` over REST:
 
 <Tabs syncKey="lang">
 <TabItem label="CLI">
@@ -76,120 +205,17 @@ JSON
 ```
 
 ```text
-created stream tnb1:e9844e998730d9d861d58dc35778d1b4 at ./audit
-stream key fingerprint (pin it): sha256:e9844e998730d9d861d58dc35778d1b44f53469ad56006182f9b021873687d5c
-keys: ./keys/tnb1-e9844e998730d9d861d58dc35778d1b4
-verify with: tenbri verify ./audit --key sha256:e9844e998730d9d861d58dc35778d1b44f53469ad56006182f9b021873687d5c
+created stream tnb1:6ea0f69406b84005a960755dd3cfd8e8 at ./audit
+stream key fingerprint (pin it): sha256:6ea0f69406b84005a960755dd3cfd8e8e2c8352d0a4de17430173e60bdcea2b4
+keys: ./keys/tnb1-6ea0f69406b84005a960755dd3cfd8e8
+verify with: tenbri verify ./audit --key sha256:6ea0f69406b84005a960755dd3cfd8e8e2c8352d0a4de17430173e60bdcea2b4
 refunded ch_123
-{"action":{"target":"stripe:ch_123","type":"issue_refund"},"id":"01M5CWQSYK9KCVZ324HR4RBH50","intent":"01M5CWQSMZN0TJ32SX8TT6CGBR","kind":"decision","phase":"outcome","prev":"sha256:64200c68…","principal":{"id":"support","kind":"agent"},"seq":4,"sig":"ed25519:17c20512…","signer":"…","source":"sdk","status":"ok","stream":"tnb1:e9844e998730d9d861d58dc35778d1b4","ts":"…","v":1}
+{"action":{"target":"stripe:ch_123","type":"issue_refund"},"id":"01M5D1BJNTJZWCDWZ0E8WS5QHV","intent":"01M5D1BJBSKW9AH2H7S8S8D9FK","kind":"decision","phase":"outcome","prev":"sha256:4d38ec8d…","principal":{"id":"support","kind":"agent"},"seq":4,"sig":"ed25519:298c779b…","signer":"sess:2026-10-20:8439598040cf","source":"sdk","status":"ok","stream":"tnb1:6ea0f69406b84005a960755dd3cfd8e8","ts":"2026-10-20T16:12:20.026Z","v":1}
 ```
 
 `./issue-refund` stands for your tool. A draft the writer refuses prints
 `tenbri: entry rejected: <code>: <detail>` and exits 2, so `set -e` stops before the tool runs: a
 draft without `source`, for example, is rejected with `invalid_field`.
-
-</TabItem>
-<TabItem label="Python">
-
-`intent` raises if the entry cannot be written, so the tool never runs unrecorded. `principal`,
-`action` and `source` of the outcome default to the intent's.
-
-```python title="wrap.py"
-from tenbri import Tenbri
-
-log = Tenbri.open("./audit", create=True)
-
-
-def issue_refund(charge):
-    return f"refunded {charge}"  # your tool
-
-
-def recorded(charge):
-    intent = log.intent(
-        principal="agent:support",
-        action={"type": "issue_refund", "target": f"stripe:{charge}"},
-    )  # durable before the tool runs; raises if it cannot be written
-    try:
-        result = issue_refund(charge)
-    except Exception:
-        log.outcome(intent, "error")
-        raise
-    log.outcome(intent, "ok")
-    return result
-
-
-print(recorded("ch_123"))
-for m in log.query(action="issue_refund"):
-    print(m.entry["seq"], m.entry["phase"], m.entry.get("status", ""), m.entry["action"])
-print("verified:", log.verify(log.fingerprint).ok)
-log.close()
-```
-
-```text
-refunded ch_123
-3 intent  {'target': 'stripe:ch_123', 'type': 'issue_refund'}
-4 outcome ok {'target': 'stripe:ch_123', 'type': 'issue_refund'}
-verified: True
-```
-
-The binding has a shortcut for the same thing, a context manager (and decorator) that records
-`ok`, `error`, or `refused` when the block raises `tenbri.Refused`:
-
-```python
-with log.decision("issue_refund", "stripe:ch_456", principal="agent:support"):
-    issue_refund("ch_456")
-```
-
-With asyncio, `AsyncTenbri` has the same methods as coroutines.
-
-</TabItem>
-<TabItem label="TypeScript">
-
-`intent` rejects if the entry cannot be written, so the tool never runs unrecorded. `principal`,
-`action` and `source` of the outcome default to the intent's.
-
-```ts title="wrap.ts"
-import { Tenbri } from 'tenbri'
-
-const log = await Tenbri.open('./audit', { create: true })
-
-const issueRefund = async (charge: string) => `refunded ${charge}` // your tool
-
-async function recorded(charge: string) {
-  // durable before the tool runs; rejects if it cannot be written
-  const intent = await log.intent({
-    principal: 'agent:support',
-    action: { type: 'issue_refund', target: `stripe:${charge}` },
-  })
-  try {
-    const result = await issueRefund(charge)
-    await log.outcome(intent, 'ok')
-    return result
-  } catch (e) {
-    await log.outcome(intent, 'error')
-    throw e
-  }
-}
-
-console.log(await recorded('ch_123'))
-for (const { entry: e } of await log.query({ action: 'issue_refund' })) console.log(e.seq, e.phase, e.status ?? '', e.action)
-console.log('verified:', (await log.verify(log.fingerprint!)).ok)
-await log.close()
-```
-
-```text
-refunded ch_123
-3 intent  { target: 'stripe:ch_123', type: 'issue_refund' }
-4 outcome ok { target: 'stripe:ch_123', type: 'issue_refund' }
-verified: true
-```
-
-The binding has a shortcut for the same thing, which records `ok`, `error`, or `refused` when the
-callback throws `Refused`:
-
-```ts
-await log.decision({ action: 'issue_refund', target: 'stripe:ch_456', principal: 'agent:support' }, () => issueRefund('ch_456'))
-```
 
 </TabItem>
 <TabItem label="REST">
