@@ -4,6 +4,7 @@ import mascot from '../assets/mascot.webp';
 import Site from '../layouts/Site.astro';
 import CodeWindow from '../components/CodeWindow.astro';
 import TerminalPlayer from '../components/TerminalPlayer.astro';
+import ArchDiagram from '../components/ArchDiagram.astro';
 import claudeIcon from '@lobehub/icons-static-svg/icons/claude-color.svg?raw';
 import openaiIcon from '@lobehub/icons-static-svg/icons/openai.svg?raw';
 import langgraphIcon from '@lobehub/icons-static-svg/icons/langgraph.svg?raw';
@@ -281,7 +282,7 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 			</div>
 		</section>
 
-		<section class="band">
+		<section class="band alt">
 			<div class="wrap section-head center">
 				<p class="eyebrow">What you get</p>
 				<h2>Built for the day something goes wrong</h2>
@@ -299,6 +300,20 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 						</div>
 					</div>
 				))}
+			</div>
+		</section>
+
+		<section class="band" aria-labelledby="arch-title">
+			<div class="wrap section-head center">
+				<p class="eyebrow">Architecture</p>
+				<h2 id="arch-title">Write, sign and chain, store, prove</h2>
+				<p class="sub">One Rust core behind every SDK, the CLI and tenbrid. Turn on the optional parts when you need them; the rest is on the roadmap.</p>
+			</div>
+			<div class="wrap">
+				<ArchDiagram wide />
+			</div>
+			<div class="wrap center-link">
+				<a class="more" href="/docs/concepts/architecture/">How the parts fit together <span aria-hidden="true">→</span></a>
 			</div>
 		</section>
 
@@ -525,6 +540,8 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	.story-stats li:last-child strong { color: var(--stamp); }
 	.story-stats span { color: var(--ink-2); font-size: 0.98rem; }
 	.story-stats code { font: 0.85em var(--font-mono); color: var(--ink); }
+
+	.center-link { text-align: center; }
 
 	/* Compliance */
 	.regs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2.5rem; align-items: center; }

@@ -62,10 +62,12 @@ const tiers: Tier[] = [
 		],
 	},
 ];
+interface Props { wide?: boolean }
+const { wide = false } = Astro.props;
 const label: Record<Kind, string> = { core: '', optional: 'optional', soon: 'coming soon', progress: 'in progress' };
 ---
 
-<figure class="arch not-content" aria-label="Tenbri architecture">
+<figure class:list={['arch not-content', { wide }]} aria-label="Tenbri architecture">
 	<ul class="legend" aria-label="Legend">
 		<li><span class="sw core"></span>Core</li>
 		<li><span class="sw optional"></span>Optional</li>
@@ -108,26 +110,33 @@ const label: Record<Kind, string> = { core: '', optional: 'optional', soon: 'com
 
 <style>
 	.arch {
+		--a-line: var(--sl-color-gray-5, var(--rule));
+		--a-muted: var(--sl-color-gray-3, var(--ink-2));
+		--a-dim: var(--sl-color-gray-4, color-mix(in srgb, var(--ink-2) 60%, transparent));
+		--a-ink: var(--sl-color-white, var(--ink));
+		--a-chip: var(--sl-color-gray-6, var(--paper-2));
+		--a-card: var(--sl-color-black, var(--paper));
+		--a-panel: var(--sl-color-gray-7, var(--sl-color-gray-6, var(--paper-2)));
 		margin: 2rem 0;
 		padding: clamp(1rem, 3vw, 1.5rem);
-		border: 1px solid var(--sl-color-gray-5);
+		border: 1px solid var(--a-line);
 		border-radius: 1rem;
-		background: var(--sl-color-gray-7, var(--sl-color-gray-6));
+		background: var(--a-panel);
 		display: grid;
 		gap: 0.25rem;
 	}
-	.legend { list-style: none; margin: 0 0 0.9rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.8rem; color: var(--sl-color-gray-3); }
+	.legend { list-style: none; margin: 0 0 0.9rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.8rem; color: var(--a-muted); }
 	.legend li { display: inline-flex; align-items: center; gap: 0.45rem; margin: 0; }
-	.sw { width: 1.4rem; height: 0.9rem; border-radius: 0.3rem; border: 1.5px solid var(--sl-color-gray-3); background: var(--sl-color-black); }
+	.sw { width: 1.4rem; height: 0.9rem; border-radius: 0.3rem; border: 1.5px solid var(--a-muted); background: var(--a-card); }
 	.sw.core { border-color: var(--stamp); }
 	.sw.optional { border-style: dashed; }
 	.sw.progress { border-color: var(--amber); border-style: dashed; }
 	.sw.soon { border-style: dotted; opacity: 0.6; }
 
 	.tier {
-		border: 1px solid var(--sl-color-gray-5);
+		border: 1px solid var(--a-line);
 		border-radius: 0.85rem;
-		background: var(--sl-color-black);
+		background: var(--a-card);
 		padding: 1rem;
 		display: grid;
 		gap: 0.85rem;
@@ -142,8 +151,8 @@ const label: Record<Kind, string> = { core: '', optional: 'optional', soon: 'com
 		color: #fff;
 		font: 600 0.85rem/1 var(--font-mono);
 	}
-	.tt { margin: 0; font: 750 1.05rem/1.2 var(--font-display); color: var(--sl-color-white); }
-	.tc { margin: 0; font-size: 0.85rem; color: var(--sl-color-gray-3); }
+	.tt { margin: 0; font: 750 1.05rem/1.2 var(--font-display); color: var(--a-ink); }
+	.tc { margin: 0; font-size: 0.85rem; color: var(--a-muted); }
 	.parts { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: 0.5rem; }
 	.parts li { margin: 0; display: flex; }
 	.part {
@@ -151,18 +160,18 @@ const label: Record<Kind, string> = { core: '', optional: 'optional', soon: 'com
 		display: grid; align-content: start; gap: 0.2rem;
 		padding: 0.6rem 0.75rem;
 		border-radius: 0.6rem;
-		border: 1.5px solid var(--sl-color-gray-4);
-		color: var(--sl-color-white);
+		border: 1.5px solid var(--a-dim);
+		color: var(--a-ink);
 		text-decoration: none;
 		position: relative;
 	}
-	a.part:hover { background: var(--sl-color-gray-6); }
+	a.part:hover { background: var(--a-chip); }
 	.part.core { border-color: var(--stamp); }
 	.part.optional { border-style: dashed; }
 	.part.progress { border-color: var(--amber); border-style: dashed; }
-	.part.soon { border-style: dotted; color: var(--sl-color-gray-3); }
+	.part.soon { border-style: dotted; color: var(--a-muted); }
 	.pn { font-weight: 600; font-size: 0.9rem; line-height: 1.3; }
-	.pd { font-size: 0.78rem; line-height: 1.35; color: var(--sl-color-gray-3); }
+	.pd { font-size: 0.78rem; line-height: 1.35; color: var(--a-muted); }
 	.badge {
 		justify-self: start;
 		margin-top: 0.25rem;
@@ -171,9 +180,22 @@ const label: Record<Kind, string> = { core: '', optional: 'optional', soon: 'com
 		text-transform: uppercase;
 		padding: 0.25rem 0.4rem;
 		border-radius: 999px;
-		background: var(--sl-color-gray-6);
-		color: var(--sl-color-gray-2);
+		background: var(--a-chip);
+		color: var(--a-ink);
 	}
 	.progress .badge { color: var(--amber); }
 	.flow { display: grid; place-items: center; color: var(--stamp); padding: 0.15rem 0; }
+	/* Wide: the four steps side by side (landing page) */
+	@media (min-width: 1000px) {
+		.arch.wide { grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 1.6rem; align-items: stretch; margin: 0; }
+		.arch.wide .legend { grid-column: 1 / -1; justify-content: center; }
+		.arch.wide .flow { display: none; }
+		.arch.wide .tier { position: relative; align-content: start; }
+		.arch.wide .tier:not(:last-of-type)::after {
+			content: '→';
+			position: absolute; right: -1.35rem; top: 1.15rem;
+			color: var(--stamp); font: 600 1.1rem/1 var(--font-mono);
+		}
+		.arch.wide .parts { grid-template-columns: minmax(0, 1fr); }
+	}
 </style>
