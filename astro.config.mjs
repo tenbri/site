@@ -14,6 +14,16 @@ export default defineConfig({
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/tenbri/tenbri' }],
 			editLink: { baseUrl: 'https://github.com/tenbri/site/edit/main/' },
 			lastUpdated: true,
+			expressiveCode: {
+				themes: ['github-dark-default', 'github-light-default'],
+				styleOverrides: {
+					borderRadius: '0.75rem',
+					codeFontFamily: "'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace",
+					codeFontSize: '0.85rem',
+					codeLineHeight: '1.7',
+					frames: { shadowColor: 'transparent' },
+				},
+			},
 			components: { Header: './src/components/DocsHeader.astro' },
 			sidebar: [
 				{ label: 'Start here', items: ['docs/introduction', 'docs/why-not-logs', { autogenerate: { directory: 'docs/getting-started' } }] },

@@ -78,53 +78,78 @@ choice, fixed per input `ref`.
 In Rust, `DataKeys::digest(subject, content)` computes it under the subject's newest data key, and
 `DataKeys::confirm` checks a digest against every epoch the store still holds.
 
-The Python and TypeScript bindings compute input digests with a `digest_key` (`digestKey`) you
-pass when you open the stream: HMAC-SHA-256 directly under that key, in the same
-`hmac-sha256:` form. That key is yours to keep and to destroy; it is not in the data key store, so
-`tenbri erase` does not touch it.
+The Python and TypeScript SDKs compute it the same way, from the same local key store: an input
+pinned by a decision is digested under the data key of the decision's `subject` (the tenant's when
+it has none), made on first use. There is no secret to put in code, and `tenbri erase` makes those
+digests unconfirmable like any other.
 
 <Tabs syncKey="lang">
 <TabItem label="Python">
 
 ```python
-from tenbri import Tenbri
+import tenbri
 
-log = Tenbri.open("audit/support", create=True, digest_key=b"a 32-byte secret, kept apart....")
+tenbri.init("audit/support", agent="agent:support")
 
-with log.run("agent:support-assistant") as run:
-    # The next decision lists this input with its keyed digest.
-    run.read("policy:refund", "14", b"refunds under 50 EUR are automatic")
-    with run.decision("issue_refund", "stripe:ch_123"):
-        pass  # issue the refund here
 
-print(log.digest(b"refunds under 50 EUR are automatic"))
+@tenbri.decision(
+    "issue_refund",
+    target="stripe:{charge}",
+    subject="{customer}",
+    inputs=[("policy:refund", "14", b"refunds under 500 are automatic")],
+)
+def refund(charge: str, customer: str) -> None: ...
+
+
+refund("ch_123", "subj_7f3c91d2")  # the intent lists the input with its keyed digest
+print(tenbri.default().digest(b"refunds under 500 are automatic", subject="subj_7f3c91d2"))
 ```
 
 </TabItem>
 <TabItem label="TypeScript">
 
 ```ts
-import { Tenbri } from 'tenbri'
+import { decision, defaultStream, init } from 'tenbri'
 
-const log = await Tenbri.open('audit/support', { create: true, digestKey: 'a 32-byte secret, kept apart....' })
+init({ stream: 'audit/support', agent: 'agent:support' })
 
-await log.run({ principal: 'agent:support-assistant' }, async (run) => {
-  // The next decision lists this input with its keyed digest.
-  run.read('policy:refund', { version: '14', content: 'refunds under 50 EUR are automatic' })
-  await run.decision({ action: 'issue_refund', target: 'stripe:ch_123' }, async () => {
-    // issue the refund here
-  })
-})
+const refund = decision(
+  {
+    action: 'issue_refund',
+    target: 'stripe:{charge}',
+    subject: '{customer}',
+    inputs: [{ ref: 'policy:refund', version: '14', content: 'refunds under 500 are automatic' }],
+  },
+  async ({ charge, customer }: { charge: string; customer: string }) => {},
+)
 
-console.log(log.digest('refunds under 50 EUR are automatic'))
+await refund({ charge: 'ch_123', customer: 'subj_7f3c91d2' }) // the intent lists the input with its keyed digest
+const log = await defaultStream()
+console.log(log.digest('refunds under 500 are automatic', { subject: 'subj_7f3c91d2' }))
 ```
 
 </TabItem>
 </Tabs>
 
+Python prints the digest the intent carries,
+`"inputs":[{"digest":"hmac-sha256:88814a98…","ref":"policy:refund","version":"14"}]`:
+
 ```text
-hmac-sha256:f9ed1ff2d344efdbd6fef3a3192c28862cce0140989468086a354ccae089dd99
+hmac-sha256:88814a98c372efacfafcc1d64fb041ff3dfcc2453192ba412f7ecd8c09f56790
 ```
+
+The same content gives another digest on another stream (the TypeScript run printed
+`hmac-sha256:a1610a8f…`) or for another subject: each has its own key. After
+`tenbri erase audit/support --subject subj_7f3c91d2 ...`, the digest above can no longer be
+confirmed; digesting the same content for that subject again makes a new key and gives another
+value (`hmac-sha256:4bed99d2…`).
+
+- `run.read(...)` in the stream API digests under the tenant's key: it has no subject.
+- `digest_key` (Python) or `digestKey` (TypeScript), given to `init()` or `Tenbri.open`, keys
+  every digest yourself instead, with HMAC-SHA-256 directly under that key. That key is yours to
+  keep and to destroy; it is not in the data key store, so `tenbri erase` does not touch it.
+
+Every argument is in the [SDK reference](/docs/reference/sdk/#inputs-and-digests).
 
 ## Erasure
 

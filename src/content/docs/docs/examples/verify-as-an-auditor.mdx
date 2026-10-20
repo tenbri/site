@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Aside, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
 You are the auditor. The operator gives you the stream's fingerprint through a channel they cannot
 rewrite later (a signed email, a ticket, a contract annex). You verify the stream against it, keep
@@ -19,7 +19,7 @@ fingerprint, never the operator's keys.
 - The `tenbri` CLI to set up the stream and seal a checkpoint, plus `jq`:
 
   ```sh
-  cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+  cargo install tenbri-cli --version 0.1.0-beta.2 --locked
   ```
 
 - The tool you verify with:
@@ -101,7 +101,7 @@ bun add tenbri@next
 `curl` and a `tenbrid` that serves the stream, with a token for you:
 
 ```sh
-cargo install tenbri-server --version 0.1.0-beta.1 --locked
+cargo install tenbri-server --version 0.1.0-beta.2 --locked
 ```
 
 </TabItem>
@@ -129,19 +129,24 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
     "principal":{"kind":"agent","id":"support-assistant"},
     "action":{"type":"reply_ticket","target":"zendesk:ticket/4821"}}
    EOF
+   tenbri index rebuild audit/support
    ```
 
    ```text
-   created stream tnb1:db888dbab715e39d31a8b0c7b6bd418a at audit/support
-   stream key fingerprint (pin it): sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe
-   keys: ./keys/tnb1-db888dbab715e39d31a8b0c7b6bd418a
-   verify with: tenbri verify audit/support --key sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe
+   created stream tnb1:04abaaf0fc12080fe179a5064159b672 at audit/support
+   stream key fingerprint (pin it): sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de
+   keys: ./keys/tnb1-04abaaf0fc12080fe179a5064159b672
+   verify with: tenbri verify audit/support --key sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de
+   indexed 4 entries of tnb1:04abaaf0fc12080fe179a5064159b672 (sqlite) at …/tenbri/index/tnb1-04abaaf0fc12080fe179a5064159b672
    ```
+
+   `tenbri index rebuild` builds the query index `tenbri query` answers from, in your cache
+   directory (or `$TENBRI_INDEX_DIR`). Step 5 shows it does not hide an edit.
 
    The fingerprint is what the operator sends you. Keep it in `PIN`:
 
    ```sh
-   export PIN=sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe
+   export PIN=sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de
    ```
 
 2. **Verify without a pin, then with it.**
@@ -160,10 +165,10 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    ```
 
    ```text
-   consistent: 4 entries, stream tnb1:db888dbab715e39d31a8b0c7b6bd418a
+   consistent: 4 entries, stream tnb1:04abaaf0fc12080fe179a5064159b672
    NOT pinned: this only shows the stream agrees with its own genesis key; pass --key <fingerprint>
    exit 3
-   verified 4 entries, stream tnb1:db888dbab715e39d31a8b0c7b6bd418a, pinned to sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe
+   verified 4 entries, stream tnb1:04abaaf0fc12080fe179a5064159b672, pinned to sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de
    exit 0
    ```
 
@@ -195,9 +200,9 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    ```
 
    ```text
-   VerifyReport(stream='tnb1:db888dbab715e39d31a8b0c7b6bd418a', entries=4, pinned_key=None, broken=None, checkpoint=None)
+   VerifyReport(stream='tnb1:04abaaf0fc12080fe179a5064159b672', entries=4, pinned_key=None, broken=None, checkpoint=None)
    exit 3
-   VerifyReport(stream='tnb1:db888dbab715e39d31a8b0c7b6bd418a', entries=4, pinned_key='sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe', broken=None, checkpoint=None)
+   VerifyReport(stream='tnb1:04abaaf0fc12080fe179a5064159b672', entries=4, pinned_key='sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de', broken=None, checkpoint=None)
    exit 0
    ```
 
@@ -227,7 +232,7 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    ```text
    {
      ok: false,
-     stream: 'tnb1:db888dbab715e39d31a8b0c7b6bd418a',
+     stream: 'tnb1:04abaaf0fc12080fe179a5064159b672',
      entries: 4,
      pinnedKey: null,
      broken: null,
@@ -236,9 +241,9 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    exit 3
    {
      ok: true,
-     stream: 'tnb1:db888dbab715e39d31a8b0c7b6bd418a',
+     stream: 'tnb1:04abaaf0fc12080fe179a5064159b672',
      entries: 4,
-     pinnedKey: 'sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe',
+     pinnedKey: 'sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de',
      broken: null,
      checkpoint: null
    }
@@ -257,10 +262,10 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
 
    [streams.support]
    path = "audit/support"
-   key = "sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe"
+   key = "sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de"
 
    [[tokens]]
-   sha256 = "sha256:3d19cdaba826019fd319346560190e1269ccc88f762fa4dc2cdcfbd7b4b8767b"
+   sha256 = "sha256:5bfcea2943a6a34ad03c272a86bf4b1a5c569296029215eec797017917d0b1c5"
    principal = { kind = "person", id = "auditor" }
    ```
 
@@ -272,14 +277,14 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
 
    ```sh
    export TENBRI_URL=http://127.0.0.1:7070
-   export TOKEN=tnbt_d0ae9132…   # the token tenbrid printed
+   export TOKEN=tnbt_9605b1b8…   # the token tenbrid printed
    curl -s $TENBRI_URL/v1/streams/support/verify -H "Authorization: Bearer $TOKEN"
    curl -s $TENBRI_URL/v1/streams/support/verify -H "Authorization: Bearer $TOKEN" \
      | jq -e --arg pin "$PIN" '.pinned_key == $pin and .broken == null'; echo "exit $?"
    ```
 
    ```text
-   {"stream":"tnb1:db888dbab715e39d31a8b0c7b6bd418a","entries":4,"pinned_key":"sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe"}
+   {"stream":"tnb1:04abaaf0fc12080fe179a5064159b672","entries":4,"pinned_key":"sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de"}
    true
    exit 0
    ```
@@ -300,9 +305,9 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
 
    ```text
    checkpoint at size 4: checkpoints/000000000004.note
-   tnb1:db888dbab715e39d31a8b0c7b6bd418a
+   tnb1:04abaaf0fc12080fe179a5064159b672
    4
-   0SREoiNR1ENpnImgPcXhjwWKjv1yTiX3aR+6YMRp57s=
+   8R1UvoldFfujbZI5RPSPqp+ndaP0Q9rb90Io8x/qmMA=
    ```
 
    The three lines are the origin (the stream id), the size and the root hash. A blank line and
@@ -319,9 +324,9 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    ```
 
    ```text
-   matches checkpoint tnb1:db888dbab715e39d31a8b0c7b6bd418a at size 4
+   matches checkpoint tnb1:04abaaf0fc12080fe179a5064159b672 at size 4
    matches its latest checkpoint, at size 4
-   verified 4 entries, stream tnb1:db888dbab715e39d31a8b0c7b6bd418a, pinned to sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe
+   verified 4 entries, stream tnb1:04abaaf0fc12080fe179a5064159b672, pinned to sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de
    exit 0
    ```
 
@@ -336,7 +341,7 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    ```
 
    ```text
-   VerifyReport(stream='tnb1:db888dbab715e39d31a8b0c7b6bd418a', entries=4, pinned_key='sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe', broken=None, checkpoint=4)
+   VerifyReport(stream='tnb1:04abaaf0fc12080fe179a5064159b672', entries=4, pinned_key='sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de', broken=None, checkpoint=4)
    ```
 
    </TabItem>
@@ -389,12 +394,24 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
 
    ```text
    broken at seq 3: bad_signature: the signature does not verify
-   2 entries verified before it, stream tnb1:db888dbab715e39d31a8b0c7b6bd418a
+   2 entries verified before it, stream tnb1:04abaaf0fc12080fe179a5064159b672
    exit 1
    ```
 
-   Reads that check the stream refuse it too. `--verify` makes `query` read the stream itself
-   rather than trust a query index built earlier:
+   Queries refuse it too, even when they answer from the index built in step 1: each answer is
+   checked against the batch in storage that holds it.
+
+   ```sh
+   tenbri query audit/support --action reply_ticket --key $PIN; echo "exit $?"
+   ```
+
+   ```text
+   tenbri: the stream changed under the index at seq 3: run `tenbri verify`
+   exit 1
+   ```
+
+   A query whose answers all come from other batches still answers, marked `indexed`. With
+   `--verify`, `query` checks the whole stream first and names the broken entry:
 
    ```sh
    tenbri query audit/support --action reply_ticket --key $PIN --verify; echo "exit $?"
@@ -413,7 +430,7 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    ```
 
    ```text
-   VerifyReport(stream='tnb1:db888dbab715e39d31a8b0c7b6bd418a', entries=2, pinned_key='sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe', broken=Broken(seq=3, code='bad_signature', message='the signature does not verify'), checkpoint=None)
+   VerifyReport(stream='tnb1:04abaaf0fc12080fe179a5064159b672', entries=2, pinned_key='sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de', broken=Broken(seq=3, code='bad_signature', message='the signature does not verify'), checkpoint=None)
    exit 1
    ```
 
@@ -431,9 +448,9 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    ```text
    {
      ok: false,
-     stream: 'tnb1:db888dbab715e39d31a8b0c7b6bd418a',
+     stream: 'tnb1:04abaaf0fc12080fe179a5064159b672',
      entries: 2,
-     pinnedKey: 'sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe',
+     pinnedKey: 'sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de',
      broken: {
        code: 'bad_signature',
        message: 'the signature does not verify',
@@ -460,16 +477,23 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    ```
 
    ```text
-   {"stream":"tnb1:db888dbab715e39d31a8b0c7b6bd418a","entries":2,"pinned_key":"sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe","broken":{"seq":3,"code":"bad_signature","message":"the signature does not verify"}}
+   {"stream":"tnb1:04abaaf0fc12080fe179a5064159b672","entries":2,"pinned_key":"sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de","broken":{"seq":3,"code":"bad_signature","message":"the signature does not verify"}}
    false
    exit 1
    ```
 
-   <Aside type="caution">
-   `GET /entries` answers from the entries `tenbrid` read and verified when they were written,
-   so after an edit on disk it still returns the original, `verified` entries. Call `/verify`
-   to check what storage holds now.
-   </Aside>
+   `GET /entries` checks each answer against the batch in storage that holds it, so an answer
+   from the edited batch is refused, though `tenbrid` verified the entry when it started:
+
+   ```sh
+   curl -s -w '\n%{http_code}\n' "$TENBRI_URL/v1/streams/support/entries?action=reply_ticket" \
+     -H "Authorization: Bearer $TOKEN"
+   ```
+
+   ```text
+   {"error":{"code":"TENBRI_STREAM_BROKEN","message":"the stream changed under the index at seq 3: run `tenbri verify`"}}
+   500
+   ```
 
    </TabItem>
    </Tabs>

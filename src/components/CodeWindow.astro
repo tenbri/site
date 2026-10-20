@@ -1,0 +1,125 @@
+---
+// An editor-style window: file tabs, a copy button, and Shiki syntax highlighting.
+import { Code } from 'astro:components';
+import githubDark from 'shiki/themes/github-dark-default.mjs';
+
+interface File {
+	name: string;
+	lang: string;
+	code: string;
+}
+interface Props {
+	files: File[];
+	label?: string;
+}
+const { files, label = 'Code example' } = Astro.props;
+const uid = 'cw' + Math.random().toString(36).slice(2, 8);
+---
+
+<div class="cw" data-cw>
+	<div class="cw-bar">
+		<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+		<div class="cw-tabs" role="tablist" aria-label={label}>
+			{files.map((f, i) => (
+				<button type="button" role="tab" id={`${uid}-t${i}`} aria-controls={`${uid}-p${i}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>
+					{f.name}
+				</button>
+			))}
+		</div>
+		<button type="button" class="cw-copy" aria-label="Copy code">
+			<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M8 8h11v13H8zM5 16H4V3h11v1" /></svg>
+			<span>Copy</span>
+		</button>
+	</div>
+	{files.map((f, i) => (
+		<div class="cw-panel" role="tabpanel" id={`${uid}-p${i}`} aria-labelledby={`${uid}-t${i}`} hidden={i !== 0} data-code={f.code}>
+			<Code code={f.code} lang={f.lang as any} theme={githubDark} />
+		</div>
+	))}
+</div>
+
+<script>
+	for (const cw of document.querySelectorAll<HTMLElement>('[data-cw]')) {
+		const tabs = [...cw.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+		const select = (tab: HTMLButtonElement) => {
+			for (const t of tabs) {
+				const on = t === tab;
+				t.setAttribute('aria-selected', String(on));
+				t.tabIndex = on ? 0 : -1;
+				cw.querySelector<HTMLElement>('#' + t.getAttribute('aria-controls'))!.hidden = !on;
+			}
+		};
+		tabs.forEach((tab, i) => {
+			tab.addEventListener('click', () => select(tab));
+			tab.addEventListener('keydown', (e) => {
+				const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+				if (!d) return;
+				const next = tabs[(i + d + tabs.length) % tabs.length];
+				select(next);
+				next.focus();
+			});
+		});
+		const copy = cw.querySelector<HTMLButtonElement>('.cw-copy')!;
+		const label = copy.querySelector('span')!;
+		copy.addEventListener('click', async () => {
+			const panel = cw.querySelector<HTMLElement>('.cw-panel:not([hidden])')!;
+			try {
+				await navigator.clipboard.writeText(panel.dataset.code ?? '');
+				label.textContent = 'Copied';
+			} catch {
+				getSelection()?.selectAllChildren(panel);
+			}
+			setTimeout(() => (label.textContent = 'Copy'), 1500);
+		});
+	}
+</script>
+
+<style>
+	.cw {
+		min-width: 0;
+		border-radius: 0.85rem;
+		background: #0d1117;
+		border: 1px solid #262c36;
+		box-shadow: 0 24px 60px -24px rgb(0 0 0 / 0.6);
+		overflow: hidden;
+		text-align: left;
+	}
+	.cw-bar { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0.6rem 0.5rem 0.9rem; background: #151b23; border-bottom: 1px solid #262c36; }
+	.dots { display: flex; gap: 6px; flex: none; }
+	.dots i { width: 10px; height: 10px; border-radius: 50%; background: #3a414c; }
+	.cw-tabs { display: flex; gap: 0.2rem; overflow-x: auto; min-width: 0; }
+	.cw-tabs button {
+		flex: none;
+		font: 500 0.78rem/1 var(--font-mono);
+		padding: 0.45rem 0.7rem;
+		border: 0;
+		border-radius: 0.4rem;
+		background: transparent;
+		color: #8b949e;
+		cursor: pointer;
+	}
+	.cw-tabs button:hover { color: #e6edf3; }
+	.cw-tabs [aria-selected='true'] { background: #262c36; color: #e6edf3; }
+	.cw-copy {
+		margin-left: auto;
+		flex: none;
+		display: inline-flex; align-items: center; gap: 0.35rem;
+		font: 500 0.75rem/1 var(--font-mono);
+		padding: 0.4rem 0.6rem;
+		border: 1px solid #30363d;
+		border-radius: 0.4rem;
+		background: transparent;
+		color: #8b949e;
+		cursor: pointer;
+	}
+	.cw-copy:hover { color: #e6edf3; border-color: #484f58; }
+	.cw-panel :global(pre) {
+		margin: 0;
+		padding: 1.1rem 1.25rem 1.25rem;
+		background: transparent !important;
+		font: 400 0.84rem/1.7 var(--font-mono);
+		overflow-x: auto;
+	}
+	.cw-panel :global(code) { font-family: var(--font-mono); }
+	.cw-panel[hidden] { display: none; }
+</style>

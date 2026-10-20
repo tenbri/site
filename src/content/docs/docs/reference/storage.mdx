@@ -129,6 +129,13 @@ Each stream's index is in `<index dir>/<stream id with ':' as '-'>/`. The index 
 `~/Library/Caches/tenbri/index` on macOS, `$XDG_CACHE_HOME/tenbri/index` or
 `~/.cache/tenbri/index` on Linux, `%LOCALAPPDATA%\tenbri\index` on Windows.
 
+The index finds entries; it never supplies them. Every query, in `tenbri query` and in `tenbrid`,
+re-reads from the stream the batches that hold the entries it returns (listing `batches/` to find
+them) and checks each entry's hash and stored line against the index's. A batch edited after it
+was indexed fails the query: `tenbri query` exits 1 and `tenbrid` returns `TENBRI_STREAM_BROKEN`
+([CLI](/docs/reference/cli/#query), [API](/docs/reference/api/#query-parameters)). Signatures and
+the rest of the stream are checked by `tenbri query --verify` and `tenbri verify`.
+
 The index holds refs, targets and subject handles in plaintext. `tenbri erase` deletes the erased
 subject's rows, and a rebuild leaves them out ([Privacy](/docs/concepts/privacy/#erasure)).
 

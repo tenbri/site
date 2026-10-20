@@ -20,7 +20,7 @@ versions, list the ones under version 14, and join them to their outcomes.
 The `tenbri` CLI, `jq` and `openssl`:
 
 ```sh
-cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+cargo install tenbri-cli --version 0.1.0-beta.2 --locked
 ```
 
 </TabItem>
@@ -96,7 +96,7 @@ bun add tenbri@next
 ([tenbrid over REST](/docs/examples/tenbrid-rest/) sets one up):
 
 ```sh
-cargo install tenbri-server --version 0.1.0-beta.1 --locked
+cargo install tenbri-server --version 0.1.0-beta.2 --locked
 ```
 
 </TabItem>
@@ -159,13 +159,15 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    </TabItem>
    <TabItem label="Python">
 
-   `run.read` pins the policy text the agent read to its next decision. Raising `Refused` inside
-   the decision records the outcome as `refused`.
+   `tenbri.init()` opens the stream, creating it and its keys on first use. Each call of a
+   `@tenbri.decision` function is an intent, then its outcome: raising `tenbri.Refused` records
+   `refused`. `inputs` is a function of the arguments here, so each call pins the policy version it
+   read, with the keyed digest of its text.
 
    ```python title="decide.py"
    import os
 
-   from tenbri import Refused, Tenbri
+   import tenbri
 
    DECISIONS = [  # charge, policy version, status
        ("ch_1001", "14", "ok"),
@@ -175,23 +177,32 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
        ("ch_1005", "15", "refused"),
    ]
 
-   log = Tenbri.open(
+   log = tenbri.init(
        "./audit/support",
-       create=True,
+       agent="agent:support-assistant",
        digest_key=os.environ["TENBRI_DIGEST_KEY"].encode(),
    )
    print("pin this:", log.fingerprint)
 
-   with log.run("agent:support-assistant") as run:
-       for charge, version, status in DECISIONS:
-           run.read("policy:refund", version, f"refund policy, version {version}")
-           try:
-               with run.decision("issue_refund", f"stripe:charge/{charge}"):
-                   if status == "refused":
-                       raise Refused(f"policy {version} says no")
-           except Refused:
-               pass
-   log.close()
+
+   # inputs, a function of the arguments: the policy version this call read, with its text.
+   @tenbri.decision(
+       "issue_refund",
+       target="stripe:charge/{charge}",
+       inputs=lambda charge, version, status: [
+           ("policy:refund", version, f"refund policy, version {version}")
+       ],
+   )
+   def refund(charge: str, version: str, status: str) -> None:
+       if status == "refused":
+           raise tenbri.Refused(f"policy {version} says no")  # recorded as refused
+
+
+   for charge, version, status in DECISIONS:
+       try:
+           refund(charge, version, status)
+       except tenbri.Refused:
+           pass
    ```
 
    ```sh
@@ -199,17 +210,19 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```text
-   pin this: sha256:b548a90ee31e0ba79ee424cc485eb5b0385e2b8713b053c4c1ac284c67a29b5f
+   pin this: sha256:62bfba6e631a2fa09c574a6a3eb6a38e006103475082350d5328ebed9e1607dd
    ```
 
    </TabItem>
    <TabItem label="TypeScript">
 
-   `run.read` pins the policy text the agent read to its next decision. Throwing `Refused`
-   inside the decision records the outcome as `refused`.
+   `init()` opens the stream, creating it and its keys on first use. Each call of a `decision`
+   function is an intent, then its outcome: throwing `Refused` records `refused`. `inputs` is a
+   function of the arguments here, so each call pins the policy version it read, with the keyed
+   digest of its text. `{charge}` in `target` reads the first argument's `charge`.
 
    ```ts title="decide.ts"
-   import { Refused, Tenbri } from 'tenbri'
+   import { Refused, decision, init } from 'tenbri'
 
    const decisions = [ // charge, policy version, status
      ['ch_1001', '14', 'ok'],
@@ -219,25 +232,36 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
      ['ch_1005', '15', 'refused'],
    ]
 
-   const log = await Tenbri.open('./audit/support', {
-     create: true,
+   const log = await init({
+     stream: './audit/support',
+     agent: 'agent:support-assistant',
      digestKey: process.env.TENBRI_DIGEST_KEY!,
    })
    console.log('pin this:', log.fingerprint)
 
-   await log.run({ principal: 'agent:support-assistant' }, async (run) => {
-     for (const [charge, version, status] of decisions) {
-       run.read('policy:refund', { version, content: `refund policy, version ${version}` })
-       try {
-         await run.decision({ action: 'issue_refund', target: `stripe:charge/${charge}` }, async () => {
-           if (status === 'refused') throw new Refused(`policy ${version} says no`)
-         })
-       } catch (e) {
-         if (!(e instanceof Refused)) throw e
-       }
+   type Refund = { charge: string; version: string; status: string }
+
+   const refund = decision(
+     {
+       action: 'issue_refund',
+       target: 'stripe:charge/{charge}',
+       // inputs, a function of the arguments: the policy version this call read, with its text.
+       inputs: ({ version }: Refund) => [
+         { ref: 'policy:refund', version, content: `refund policy, version ${version}` },
+       ],
+     },
+     async ({ version, status }: Refund) => {
+       if (status === 'refused') throw new Refused(`policy ${version} says no`) // recorded as refused
+     },
+   )
+
+   for (const [charge, version, status] of decisions) {
+     try {
+       await refund({ charge, version, status })
+     } catch (e) {
+       if (!(e instanceof Refused)) throw e
      }
-   })
-   await log.close()
+   }
    ```
 
    ```sh
@@ -245,7 +269,7 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```text
-   pin this: sha256:0823b1cf12c6a78c060c8a942a97aef22acdd91530f85def7461d9beba9d5879
+   pin this: sha256:e96ad7db8d07330339611d4e41fd0ca8f6d83b9ada71337b887345d282a3690f
    ```
 
    </TabItem>
@@ -271,26 +295,26 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    <TabItem label="CLI">
 
    `query` prints one JSON object per line: the entry, its `seq`, its entry `hash`, its
-   `verification`, and `as_of` (what the answer is current to). With `--key` and `--verify`,
-   every row is checked against the pinned fingerprint.
+   `verification`, and `as_of` (what the answer is current to). With `--key`, every row is checked
+   against the pinned fingerprint: without a query index, `query` verifies the whole stream.
 
    ```sh
-   tenbri query audit/support --input policy:refund@14 --key $PIN --verify \
+   tenbri query audit/support --input policy:refund@14 --key $PIN \
      | jq -c '{seq, id: .entry.id, target: .entry.action.target, verification}'
    ```
 
    ```text
-   {"seq":3,"id":"01M5CWMYAHYECM0BSJK1NVGYEF","target":"stripe:charge/ch_1001","verification":"verified"}
-   {"seq":5,"id":"01M5CWMYCCWGQ2HAG6Y39JHKAF","target":"stripe:charge/ch_1002","verification":"verified"}
-   {"seq":9,"id":"01M5CWMYG4S718BMP25J3ZCPAV","target":"stripe:charge/ch_1004","verification":"verified"}
+   {"seq":3,"id":"01M5D12A7P8KTKMM7HE8N4GK9F","target":"stripe:charge/ch_1001","verification":"verified"}
+   {"seq":5,"id":"01M5D12A9K9SM2N2PCB2MXDP3X","target":"stripe:charge/ch_1002","verification":"verified"}
+   {"seq":9,"id":"01M5D12AD2C0CD11Y6VB3G061W","target":"stripe:charge/ch_1004","verification":"verified"}
    ```
 
    Count per version. A bare ref, `--input policy:refund`, matches any version:
 
    ```sh
-   tenbri query audit/support --input policy:refund@14 --key $PIN --verify | jq -s length
-   tenbri query audit/support --input policy:refund@15 --key $PIN --verify | jq -s length
-   tenbri query audit/support --input policy:refund --key $PIN --verify | jq -s length
+   tenbri query audit/support --input policy:refund@14 --key $PIN | jq -s length
+   tenbri query audit/support --input policy:refund@15 --key $PIN | jq -s length
+   tenbri query audit/support --input policy:refund --key $PIN | jq -s length
    ```
 
    ```text
@@ -302,7 +326,7 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    Join to the outcomes:
 
    ```sh
-   tenbri query audit/support --action issue_refund --key $PIN --verify | jq -s -c '
+   tenbri query audit/support --action issue_refund --key $PIN | jq -s -c '
      map(.entry) as $all
      | $all[] | select(.phase == "intent" and any(.inputs[]?; .ref == "policy:refund" and .version == "14")) as $i
      | $all[] | select(.intent == $i.id)
@@ -342,7 +366,7 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```sh
-   PIN=sha256:b548a90ee31e0ba79ee424cc485eb5b0385e2b8713b053c4c1ac284c67a29b5f python review.py
+   PIN=sha256:62bfba6e631a2fa09c574a6a3eb6a38e006103475082350d5328ebed9e1607dd python review.py
    ```
 
    ```text
@@ -376,7 +400,7 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```sh
-   PIN=sha256:0823b1cf12c6a78c060c8a942a97aef22acdd91530f85def7461d9beba9d5879 node review.ts
+   PIN=sha256:e96ad7db8d07330339611d4e41fd0ca8f6d83b9ada71337b887345d282a3690f node review.ts
    ```
 
    ```text
@@ -401,9 +425,9 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```text
-   {"seq":3,"id":"01M5CWMYAHYECM0BSJK1NVGYEF","target":"stripe:charge/ch_1001","verification":"verified"}
-   {"seq":5,"id":"01M5CWMYCCWGQ2HAG6Y39JHKAF","target":"stripe:charge/ch_1002","verification":"verified"}
-   {"seq":9,"id":"01M5CWMYG4S718BMP25J3ZCPAV","target":"stripe:charge/ch_1004","verification":"verified"}
+   {"seq":3,"id":"01M5D12A7P8KTKMM7HE8N4GK9F","target":"stripe:charge/ch_1001","verification":"verified"}
+   {"seq":5,"id":"01M5D12A9K9SM2N2PCB2MXDP3X","target":"stripe:charge/ch_1002","verification":"verified"}
+   {"seq":9,"id":"01M5D12AD2C0CD11Y6VB3G061W","target":"stripe:charge/ch_1004","verification":"verified"}
    ```
 
    Join to the outcomes:

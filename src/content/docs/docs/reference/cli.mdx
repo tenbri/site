@@ -141,7 +141,7 @@ tenbri query <PATH> [--input REF@VERSION]... [--action TYPE] [--principal KIND:I
 | `--status STATUS` | An outcome's status: `ok`, `error`, `refused` or `unknown` |
 | `--after SEQ` | Only entries after this sequence number, the cursor of the previous page. Default `0`. |
 | `--limit N` | At most this many entries. When more match, `tenbri: more entries match; next page: --after <seq>` goes to stderr. |
-| `--verify` | Check the index's answers against the stream, read and verified in full |
+| `--verify` | Also read and verify the whole stream, signatures included, and check the index's answers against it |
 | `--key FINGERPRINT` | Pin the stream's genesis key |
 
 Every filter given must match. Output, one line per matching entry:
@@ -159,8 +159,30 @@ Where the answer comes from decides `verification`:
 | Case | How `query` reads | `verification` |
 | --- | --- | --- |
 | No index | Reads and verifies the whole stream | `verified` with `--key`, `unpinned` without |
-| An index (see [index rebuild](#index-rebuild)) | Brings the index up to HEAD, then answers from it | `indexed` |
+| An index (see [index rebuild](#index-rebuild)) | Brings the index up to HEAD, finds the answers in it, then re-reads the batches holding them and checks each entry's hash and bytes against them | `indexed` |
 | An index and `--verify` | Also reads and verifies the whole stream and checks each answer's entry hash against it | `verified` with `--key`, `unpinned` without |
+
+An answer from the index is never the index's own copy of an entry: every query re-reads, from
+storage, the batches that hold the entries it returns, and compares each entry's hash and stored
+line with the index's. Only those batches are read. `indexed` means exactly that: the answers are
+the bytes in storage now, but signatures, the chain and the rest of the stream are not checked;
+that is `--verify`'s job.
+
+If a batch holding an answer was edited on disk after it was indexed, `query` prints nothing to
+stdout and exits 1:
+
+```text
+$ tenbri query audit/support --target zendesk:ticket/9
+tenbri: the stream changed under the index at seq 3: run `tenbri verify`
+```
+
+A query whose answers all come from other batches still answers from the index. With `--verify`,
+the same edit is caught as a broken stream instead:
+
+```text
+$ tenbri query audit/support --target zendesk:ticket/9 --verify --key sha256:34f35761…
+tenbri: the stream does not verify: broken at seq 3: bad_signature: the signature does not verify
+```
 
 If the stream does not verify, `query` prints `tenbri: the stream does not verify: broken at seq
 <n>: ...` and exits 1. With `--verify`, an index that disagrees with the stream exits 1 with
@@ -184,7 +206,8 @@ The index is a derived view that `query` uses; deleting it loses nothing. It liv
 `$TENBRI_INDEX_DIR`, else the user's cache directory (`~/Library/Caches/tenbri/index` on macOS,
 `$XDG_CACHE_HOME/tenbri/index` or `~/.cache/tenbri/index` elsewhere, `%LOCALAPPDATA%\tenbri\index`
 on Windows), one directory per stream named after its id with `:` as `-`. Once it exists, every
-`query` brings it up to HEAD first. Entries of a subject whose keys were erased are left out, and
+`query` brings it up to HEAD first, and checks its answers against the batches in storage
+([query](#query)). Entries of a subject whose keys were erased are left out, and
 `tenbri erase` deletes that subject's rows from an existing index.
 
 Output:
@@ -383,7 +406,7 @@ Stable from 0.1.0.
 | Code | Meaning |
 | --- | --- |
 | `0` | Success |
-| `1` | The stream does not verify, or does not match the `--checkpoint` given (truncated behind it, rewritten, or not signed by the stream); the first broken sequence number is printed. Also: `schema check` found an entry that breaks its action's schema; `receipt verify` found a receipt that does not verify; `query`, `tail` or `receipt create` read a stream that does not verify; `query --verify` found the index disagreeing with the stream. |
+| `1` | The stream does not verify, or does not match the `--checkpoint` given (truncated behind it, rewritten, or not signed by the stream); the first broken sequence number is printed. Also: `schema check` found an entry that breaks its action's schema; `receipt verify` found a receipt that does not verify; `query`, `tail` or `receipt create` read a stream that does not verify; `query` found a batch holding one of its answers edited since it was indexed; `query --verify` found the index disagreeing with the stream. |
 | `2` | Any other error, a malformed checkpoint file among them |
 | `3` | `verify` without `--key`: the stream is consistent with its own genesis key, which proves nothing about who wrote it |
 

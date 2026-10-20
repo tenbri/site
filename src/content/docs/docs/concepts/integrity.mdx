@@ -282,6 +282,49 @@ broken at seq 3: bad_signature: the signature does not verify
 
 The full list of codes is in the [error reference](/docs/reference/errors/).
 
+## Queries through an index
+
+`tenbri query` and `tenbrid` answer queries from an index of the stream
+([Storage](/docs/reference/storage/#query-index)), but never with the index's copy of an entry.
+Each query re-reads from storage the batches holding the entries it returns and checks each entry's
+hash and stored line against what was indexed. An edit made on disk after indexing fails the query
+instead of being answered around:
+
+<Tabs syncKey="lang">
+<TabItem label="CLI">
+
+```sh
+tenbri query audit/support --target zendesk:ticket/9
+```
+
+```text
+tenbri: the stream changed under the index at seq 3: run `tenbri verify`
+```
+
+Exit code 1, nothing on stdout.
+
+</TabItem>
+<TabItem label="REST">
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:7070/v1/streams/support/entries?target=zendesk:ticket/9"
+```
+
+```json
+{"error":{"code":"TENBRI_STREAM_BROKEN","message":"the stream changed under the index at seq 3: run `tenbri verify`"}}
+```
+
+HTTP 500.
+
+</TabItem>
+</Tabs>
+
+This check covers only the entries returned, and their bytes: an answer marked `indexed` has not
+had its signature or chain checked. `tenbri query --verify` and `tenbri verify` read and verify the
+whole stream; with `--verify`, the same edit is reported as
+`broken at seq 3: bad_signature: the signature does not verify`.
+
 ## Truncation and forks
 
 Without checkpoints, the chain and signatures detect any edit, reordering, insertion or deletion

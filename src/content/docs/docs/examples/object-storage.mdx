@@ -8,8 +8,8 @@ sidebar:
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 A stream can live under a bucket prefix instead of a local directory. Everything that takes a
-stream location (the CLI, `tenbrid`'s `path`, `Tenbri.open` in Python and Node) also takes
-`s3://bucket/<prefix>` or `r2://bucket/<prefix>`, with credentials from the same environment
+stream location (the CLI, `tenbrid`'s `path`, `init()` and `TENBRI_STREAM` in Python and Node,
+`Tenbri.open`) also takes `s3://bucket/<prefix>` or `r2://bucket/<prefix>`, with credentials from the same environment
 variables the providers' own tools read. You will run a stream on a local MinIO end to end, then
 see the variables for AWS S3 and Cloudflare R2.
 
@@ -115,80 +115,77 @@ tenbri: s3://audit-bucket/audit/billing already holds a stream
 <TabItem label="Python">
 
 ```python title="billing.py"
-from tenbri import Tenbri
+import tenbri
 
-url = "s3://audit-bucket/audit/billing-py"
-
-# Creates the stream under the prefix; its keys stay in $TENBRI_KEYS on this machine.
-log = Tenbri.open(url, create=True)
+# TENBRI_STREAM and TENBRI_AGENT say where and who. On first use, init() creates the stream under
+# the prefix; its keys stay in $TENBRI_KEYS on this machine.
+log = tenbri.init()
 pin = log.fingerprint
-print("created", log.id, "at", url)
-print("pin this:", pin)
+print("stream", log.id, "pin this:", pin)
 
-# The intent is durable in the bucket before the block runs; the outcome follows.
-with log.decision("issue_refund", "stripe:charge/ch_3PqX", principal="agent:billing-agent") as d:
-    pass  # issue the refund here
-print("intent ", d.intent["seq"], d.intent["id"])
-print("outcome", d.outcome["seq"], d.outcome["status"])
-log.close()
 
-with Tenbri.open(url, key=pin) as log:
-    report = log.verify()
-    print("verified:", report.ok, report.entries, "entries")
+# The intent is durable in the bucket before the function runs; the outcome follows.
+@tenbri.decision("issue_refund", target="stripe:charge/{charge}")
+def refund(charge: str) -> None:
+    print("refunding", charge)  # issue the refund here
+
+
+refund("ch_3PqX")
+
+report = log.verify(pin)
+print("verified:", report.ok, report.entries, "entries")
 ```
 
 ```sh
-python billing.py
+export TENBRI_AGENT=agent:billing-agent
+TENBRI_STREAM=s3://audit-bucket/audit/billing-py python billing.py
 ```
 
 ```text
-created tnb1:65b466e8e385e877a9b7e5ec2b8d2d36 at s3://audit-bucket/audit/billing-py
-pin this: sha256:65b466e8e385e877a9b7e5ec2b8d2d36781db85128d529d60605b17975131cbe
-intent  3 01M5CWT4T6J2SMJDG209ZSX7QS
-outcome 4 ok
+stream tnb1:7203ad4c5da581f4185b9126406b9611 pin this: sha256:7203ad4c5da581f4185b9126406b96118e4a86c3bbf6c169c3b81c45b76dcefb
+refunding ch_3PqX
 verified: True 4 entries
 ```
 
-With asyncio, `await AsyncTenbri.open(url)` takes the same URL.
+`tenbri.init("s3://audit-bucket/audit/billing-py")` does the same without the variable. With
+asyncio, `log.aio` is the same stream as an `AsyncTenbri`, and `@tenbri.decision` records
+`async def` functions too.
 
 </TabItem>
 <TabItem label="TypeScript">
 
 ```ts title="billing.ts"
-import { Tenbri } from 'tenbri'
+import { decision, init } from 'tenbri'
 
-const url = 's3://audit-bucket/audit/billing-ts'
-
-// Creates the stream under the prefix; its keys stay in $TENBRI_KEYS on this machine.
-const log = await Tenbri.open(url, { create: true })
+// TENBRI_STREAM and TENBRI_AGENT say where and who. On first use, init() creates the stream under
+// the prefix; its keys stay in $TENBRI_KEYS on this machine.
+const log = await init()
 const pin = log.fingerprint!
-console.log('created', log.id, 'at', url)
-console.log('pin this:', pin)
+console.log('stream', log.id, 'pin this:', pin)
 
-// The intent is durable in the bucket before the callback runs; the outcome follows.
-await log.decision({ action: 'issue_refund', target: 'stripe:charge/ch_3PqX', principal: 'agent:billing-agent' }, async (intent) => {
-  console.log('intent ', intent.seq, intent.id)
-  // issue the refund here
+// The intent is durable in the bucket before the function runs; the outcome follows.
+const refund = decision({ action: 'issue_refund', target: 'stripe:charge/{0}' }, async (charge: string) => {
+  console.log('refunding', charge) // issue the refund here
 })
-await log.close()
 
-const pinned = await Tenbri.open(url, { key: pin })
-const report = await pinned.verify()
+await refund('ch_3PqX')
+
+const report = await log.verify(pin)
 console.log('verified:', report.ok, report.entries, 'entries')
-await pinned.close()
 ```
 
 ```sh
-node billing.ts
+export TENBRI_AGENT=agent:billing-agent
+TENBRI_STREAM=s3://audit-bucket/audit/billing-ts node billing.ts
 ```
 
 ```text
-created tnb1:5dc0f9eaf28a11b170ff0eaa755932a9 at s3://audit-bucket/audit/billing-ts
-pin this: sha256:5dc0f9eaf28a11b170ff0eaa755932a9acaba75fb8ee622509f0ad5da0595292
-intent  3 01M5CWT4YR79S3RQKQY9W34AYF
+stream tnb1:54c9b6c18a44d0b3d4943d854cf8b423 pin this: sha256:54c9b6c18a44d0b3d4943d854cf8b423aafa00dd87a5d6e0f295e46c8f1c55ed
+refunding ch_3PqX
 verified: true 4 entries
 ```
 
+`init({ stream: 's3://audit-bucket/audit/billing-ts' })` does the same without the variable.
 Node 22.18 and later run `.ts` files directly (with `"type": "module"` in `package.json`); on
 Node 20, use `npx tsx billing.ts`.
 
@@ -205,7 +202,8 @@ audit/billing/batches/000000000003.jsonl
 audit/billing/batches/000000000004.jsonl
 ```
 
-A stream written from Python or Node verifies with the CLI, and the other way round.
+A stream written from Python or Node verifies with the CLI, and the other way round. On object
+storage, entries the SDKs write carry `"durability":"replicated"`.
 
 Stop MinIO when you are done:
 
@@ -235,19 +233,27 @@ tenbri verify s3://my-audit-bucket/audit/billing --key sha256:...
 </TabItem>
 <TabItem label="Python">
 
-```python
-from tenbri import Tenbri
+```sh
+export TENBRI_STREAM=s3://my-audit-bucket/audit/billing
+```
 
-log = Tenbri.open("s3://my-audit-bucket/audit/billing", create=True)
+```python
+import tenbri
+
+tenbri.init()  # or tenbri.init("s3://my-audit-bucket/audit/billing")
 ```
 
 </TabItem>
 <TabItem label="TypeScript">
 
-```ts
-import { Tenbri } from 'tenbri'
+```sh
+export TENBRI_STREAM=s3://my-audit-bucket/audit/billing
+```
 
-const log = await Tenbri.open('s3://my-audit-bucket/audit/billing', { create: true })
+```ts
+import { init } from 'tenbri'
+
+init() // or init({ stream: 's3://my-audit-bucket/audit/billing' })
 ```
 
 </TabItem>
@@ -277,19 +283,27 @@ tenbri verify r2://my-audit-bucket/audit/billing --key sha256:...
 </TabItem>
 <TabItem label="Python">
 
-```python
-from tenbri import Tenbri
+```sh
+export TENBRI_STREAM=r2://my-audit-bucket/audit/billing
+```
 
-log = Tenbri.open("r2://my-audit-bucket/audit/billing", create=True)
+```python
+import tenbri
+
+tenbri.init()  # or tenbri.init("r2://my-audit-bucket/audit/billing")
 ```
 
 </TabItem>
 <TabItem label="TypeScript">
 
-```ts
-import { Tenbri } from 'tenbri'
+```sh
+export TENBRI_STREAM=r2://my-audit-bucket/audit/billing
+```
 
-const log = await Tenbri.open('r2://my-audit-bucket/audit/billing', { create: true })
+```ts
+import { init } from 'tenbri'
+
+init() // or init({ stream: 'r2://my-audit-bucket/audit/billing' })
 ```
 
 </TabItem>
@@ -302,8 +316,9 @@ output is real):
 tenbri: r2://audit-bucket/audit/billing: set CLOUDFLARE_ACCOUNT_ID (or AWS_ENDPOINT_URL) for R2
 ```
 
-From Python, `Tenbri.open` raises the same message as a `StoreUnavailableError`
-(`TENBRI_STORE_UNAVAILABLE`); Node rejects with the same error class:
+From Python, `tenbri.init()` (and `Tenbri.open`) raise the same message as a
+`StoreUnavailableError` (`TENBRI_STORE_UNAVAILABLE`); in Node, `init()` rejects with the same
+error class:
 
 ```text
 tenbri.errors.StoreUnavailableError: r2://audit-bucket/audit/billing: set CLOUDFLARE_ACCOUNT_ID (or AWS_ENDPOINT_URL) for R2

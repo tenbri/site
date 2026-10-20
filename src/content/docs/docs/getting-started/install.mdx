@@ -8,7 +8,7 @@ sidebar:
 import { Aside, LinkCard, CardGrid, Tabs, TabItem } from '@astrojs/starlight/components';
 
 <Aside type="caution" title="Pre-release">
-The latest release is `0.1.0-beta.1`. Nothing is ready for production yet. Records written by
+The latest release is `0.1.0-beta.2`. Nothing is ready for production yet. Records written by
 pre-releases are not covered by the format promise: the format stays provisional until its
 external cryptography review ends. Every registry holds pre-releases on its pre-release channel,
 so each command below names it: `--version` for cargo, `--pre` for pip, `@next` for npm.
@@ -41,7 +41,7 @@ Needs Rust 1.85 or later. The crate is `tenbri-cli`; the binary it installs is `
 Pre-releases only install when you name the version:
 
 ```sh
-cargo install tenbri-cli --version 0.1.0-beta.1
+cargo install tenbri-cli --version 0.1.0-beta.2
 ```
 
 </TabItem>
@@ -52,7 +52,7 @@ macOS x86_64 and arm64, and Windows x86_64, with a `SHA256SUMS` file, an SBOM an
 build-provenance attestation. On macOS (Apple silicon):
 
 ```sh
-VERSION=0.1.0-beta.1
+VERSION=0.1.0-beta.2
 TARGET=aarch64-apple-darwin   # or x86_64-apple-darwin, x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
 curl -fLO "https://github.com/tenbri/tenbri/releases/download/v$VERSION/tenbri-$VERSION-$TARGET.tar.gz"
 tar -xzf "tenbri-$VERSION-$TARGET.tar.gz"
@@ -69,7 +69,7 @@ Windows takes `tenbri-$VERSION-x86_64-pc-windows-msvc.zip`. To check where an ar
 `tenbri`; `tenbrid` is next to it in `/usr/local/bin`. Pre-releases get their exact tag only:
 
 ```sh
-docker run --rm ghcr.io/tenbri/tenbri:0.1.0-beta.1 --version
+docker run --rm ghcr.io/tenbri/tenbri:0.1.0-beta.2 --version
 ```
 
 </TabItem>
@@ -96,7 +96,7 @@ tenbri --version
 ```
 
 ```text
-tenbri 0.1.0-beta.1
+tenbri 0.1.0-beta.2
 ```
 
 ### Cargo features
@@ -111,7 +111,7 @@ The CLI turns on two features by default:
 To build without the keychain:
 
 ```sh
-cargo install tenbri-cli --version 0.1.0-beta.1 --no-default-features --features s3
+cargo install tenbri-cli --version 0.1.0-beta.2 --no-default-features --features s3
 ```
 
 Object stores take their credentials from the environment, as the providers' own tools read them:
@@ -132,7 +132,7 @@ release binaries and the container above include it. With cargo, it comes from t
 `tenbri-server` crate:
 
 ```sh
-cargo install tenbri-server --version 0.1.0-beta.1
+cargo install tenbri-server --version 0.1.0-beta.2
 ```
 
 From a checkout, `cargo build -p tenbri-server --release` builds `target/release/tenbrid`.
@@ -213,11 +213,12 @@ python -c "import tenbri; print(tenbri.__version__)"
 ```
 
 ```text
-0.1.0-beta.1
+0.1.0-beta.2
 ```
 
-`Tenbri` blocks (it releases the GIL); `AsyncTenbri` has the same methods as coroutines for
-asyncio. Start with the [quickstart](/docs/getting-started/quickstart/) or
+`tenbri.init()` opens the process's default stream and `@tenbri.decision` records each call of a
+function on it, sync or async. `Tenbri` (it releases the GIL) and `AsyncTenbri` open streams
+yourself. Start with the [quickstart](/docs/getting-started/quickstart/) or
 [Write from code](/docs/examples/rust-writer/).
 
 ## Node and TypeScript
@@ -269,8 +270,26 @@ node -e "console.log(require('tenbri').version)"
 ```
 
 ```text
-0.1.0-beta.1
+0.1.0-beta.2
 ```
+
+`init()` opens the process's default stream and `decision({...}, fn)` records each call of `fn`
+on it. `Tenbri.open` opens streams yourself. Start with the
+[quickstart](/docs/getting-started/quickstart/) or [Write from code](/docs/examples/rust-writer/).
+
+## Configure init()
+
+`init()` in Python and in Node reads its settings from the environment; arguments win:
+
+| Variable | What it sets | Default |
+| --- | --- | --- |
+| `TENBRI_STREAM` | The stream: a directory, `file://...`, `s3://bucket/prefix` or `r2://bucket/prefix` | none: required |
+| `TENBRI_KEYS` | The keys directory, apart from the stream | see [Where keys live](#where-keys-live) |
+| `TENBRI_AGENT` | Who acts when nothing narrower says: `agent:support` | none |
+| `TENBRI_APPROVER` | Who answers the agent frameworks' approval prompts: `person:alice` | none |
+| `TENBRI_SCHEMA` | The action schemas | `./tenbri.toml` when there is one |
+
+It creates the stream and its keys on first use, and flushes and closes the stream at exit.
 
 ## Rust crates
 
@@ -278,7 +297,7 @@ node -e "console.log(require('tenbri').version)"
 keys and `tenbri-store` local and object storage:
 
 ```sh
-cargo add tenbri-core@0.1.0-beta.1 tenbri-keys@0.1.0-beta.1 tenbri-store@0.1.0-beta.1 tenbri-writer@0.1.0-beta.1
+cargo add tenbri-core@0.1.0-beta.2 tenbri-keys@0.1.0-beta.2 tenbri-store@0.1.0-beta.2 tenbri-writer@0.1.0-beta.2
 cargo add tokio --features macros,rt
 ```
 
@@ -359,12 +378,15 @@ In the browser, `await init()` fetches `tenbri_wasm_bg.wasm` next to the module,
 ## Framework adapters
 
 An adapter records an agent framework's tool calls, approvals and handoffs as Tenbri decisions,
-with one line at agent setup. Each installs the matching `tenbri` package with it.
+with one line after `init()`: `tenbri.instrument_claude_agent_sdk()`,
+`tenbri.instrument_openai_agents()` or `tenbri.instrument_langchain()` in Python;
+`instrumentClaudeAgentSdk(options)`, `instrumentOpenAIAgents()` or `instrumentLangChain()` in
+TypeScript. Each installs the matching `tenbri` package with it.
 
 | Framework | Python | npm |
 | --- | --- | --- |
-| Claude Agent SDK | `pip install --pre tenbri-claude-agent-sdk` | `npm install @tenbri/claude-agent-sdk tenbri@next @anthropic-ai/claude-agent-sdk` |
-| OpenAI Agents SDK | `pip install --pre tenbri-openai-agents` | `npm install @tenbri/openai-agents@next tenbri@next` |
+| Claude Agent SDK | `pip install --pre tenbri-claude-agent-sdk` | `npm install @tenbri/claude-agent-sdk@next tenbri@next @anthropic-ai/claude-agent-sdk` |
+| OpenAI Agents SDK | `pip install --pre tenbri-openai-agents` | `npm install @tenbri/openai-agents@next tenbri@next @openai/agents` |
 | LangGraph and LangChain | `pip install --pre tenbri-langgraph` | `npm install tenbri@next @tenbri/langgraph@next` |
 
 With uv, poetry, pnpm, yarn or bun, use the same names with the pre-release flags shown above.
@@ -382,7 +404,8 @@ All adapters: [Adapters](/docs/adapters/).
 Every writer (the CLI, `tenbrid`, the Python and Node packages) keeps signing keys in a keys
 directory, chosen in this order:
 
-1. `--keys <DIR>` (a global CLI flag), or `keys=` / `keys:` when you open a stream from code;
+1. `--keys <DIR>` (a global CLI flag), or `keys=` / `keys:` when you call `init()` or open a
+   stream from code;
 2. `$TENBRI_KEYS`;
 3. `$XDG_CONFIG_HOME/tenbri/keys`, else `~/.config/tenbri/keys` (`%APPDATA%\tenbri\keys` on
    Windows).

@@ -16,11 +16,13 @@ codes (`TENBRI_*`), listed in [API](/docs/reference/api/#errors).
 | `tenbri verify` | `broken at seq <n>: <code>: <detail>`, exit 1 | `broken at seq 3: bad_signature: ...` |
 | `tenbri verify --checkpoint` | Same line, then `against checkpoint <origin> at size <size>; the stream has <k> entries`, exit 1 | `broken at seq 9: truncated: ...` |
 | `tenbri query`, `tail`, `receipt create` | stderr `tenbri: the stream does not verify: broken at seq <n>: <code>: <detail>`, exit 1 | |
+| `tenbri query` through an index | A batch holding an answer was edited since it was indexed: stderr ``tenbri: the stream changed under the index at seq <n>: run `tenbri verify` ``, nothing on stdout, exit 1. No format code: run `tenbri verify` to get it. | `tenbri: the stream changed under the index at seq 3: ...` |
 | `tenbri append` | stderr `tenbri: stdin: <code>: <detail>` for a draft that does not parse; `tenbri: entry rejected: <code>: <detail>` for one the writer refuses. Exit 2; nothing is written. | `tenbri: entry rejected: bad_intent: ...` |
 | `tenbri receipt verify` | `receipt does not verify: <reason>`, exit 1 | |
 | `tenbrid` append | `TENBRI_INVALID_ENTRY` (400), with the code in `error.reason`; nothing is written | `"reason": "bad_intent"` |
 | `tenbrid` verify | `broken.code` in the `GET /v1/streams/{stream}/verify` report | `"code": "bad_signature"` |
 | `tenbrid` writes to a broken stream | `TENBRI_STREAM_BROKEN` (500), with the code in `error.reason` | |
+| `tenbrid` query (`GET .../entries`, `QueryEntries`) | A batch holding an entry of the page was edited on disk: `TENBRI_STREAM_BROKEN` (500, gRPC `DATA_LOSS`), message ``the stream changed under the index at seq <n>: run `tenbri verify` ``, no `reason` | |
 | Python and TypeScript bindings | `verify()` returns a report whose `broken` holds `seq`, `code` and `message`; failed writes raise `TenbriError` subclasses (`InvalidEntryError`, `StreamBrokenError`, ...) with the `TENBRI_*` code in `.code` and the format code in `.reason` | `report.broken.code == "untrusted_root"` |
 
 Schema violations from `tenbri.toml` are not format codes: they are reported as

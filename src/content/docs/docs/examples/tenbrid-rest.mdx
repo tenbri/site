@@ -88,7 +88,7 @@ TENBRI_LISTEN=127.0.0.1:8080 TENBRI_GRPC_LISTEN=127.0.0.1:8081 tenbrid --config 
 ```
 
 ```text
-tenbrid 0.1.0-beta.1: REST on http://127.0.0.1:8080, gRPC on 127.0.0.1:8081, 1 streams
+tenbrid 0.1.0-beta.2: REST on http://127.0.0.1:8080, gRPC on 127.0.0.1:8081, 1 streams
 ```
 
 In another terminal, export the token from step 1 and make a client. The Python and TypeScript
@@ -366,7 +366,10 @@ curl -s "http://127.0.0.1:8080/v1/streams/support/entries?input=policy:refund@14
 </Tabs>
 
 Each match carries the entry's `seq` and `hash`; `as_of` is the head of the stream the answer was
-read from.
+read from. Before answering, `tenbrid` checks each match against the batch in storage that holds
+it: if that batch was edited on disk since `tenbrid` started, the request fails with status 500
+and `TENBRI_STREAM_BROKEN` instead of returning the entry as `tenbrid` first read it
+([Verify as an auditor](/docs/examples/verify-as-an-auditor/) shows it).
 
 ## 6. Tail
 
@@ -622,7 +625,8 @@ audit/support --key …` checks it without the server.
 
 <Aside type="tip">
 A Python or Node agent on the same machine as the stream can skip the server and write in process
-with the `tenbri` package: see [Write from code](/docs/examples/rust-writer/).
+with the `tenbri` package: `tenbri.init()` and `@tenbri.decision` in Python, `init()` and
+`decision()` in Node. See [Record a refund](/docs/examples/record-a-refund/).
 </Aside>
 
 Related: [API reference](/docs/reference/api/) · [Streams and entries](/docs/concepts/streams-and-entries/) ·

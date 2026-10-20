@@ -7,8 +7,8 @@ sidebar:
 
 import { Aside, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-An action schema says what an entry for one action type must carry: inputs, a rule, an approval,
-a target pattern, and any member by its dotted path. You will write a `tenbri.toml` for
+An action schema says what an entry for one action type must carry: inputs, a rule (or the exact
+`ref@version` it must cite), an approval, a target pattern, and any member by its dotted path. You will write a `tenbri.toml` for
 `issue_refund`, check a stream against it with `tenbri schema check`, test that the entries your
 Python or TypeScript code writes pass it, have `tenbrid` refuse entries that break it, and run the
 checks on every pull request.
@@ -18,7 +18,7 @@ checks on every pull request.
 - The `tenbri` CLI, which runs every check:
 
   ```sh
-  cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+  cargo install tenbri-cli --version 0.1.0-beta.2 --locked
   ```
 
 - A stream with refund decisions, such as the one from [Record a refund](/docs/examples/record-a-refund/),
@@ -104,7 +104,7 @@ bun add tenbri@next
 `curl` and `tenbrid`:
 
 ```sh
-cargo install tenbri-server --version 0.1.0-beta.1 --locked
+cargo install tenbri-server --version 0.1.0-beta.2 --locked
 ```
 
 </TabItem>
@@ -123,16 +123,59 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    [actions.issue_refund]
    description = "Refund a card charge through Stripe."
    inputs = ["policy:refund"]
-   rule = true
    approval = true
-   target = "stripe:charge/*"
+   target = "stripe:charge/{charge}"     # {charge} matches like *; the SDKs fill it from the call
+   policy = "rule:refund-under-100@3"    # a rule is required, with this ref and version
 
    [actions.issue_refund.fields."rule.result"]
    allowed = ["allow"]
    ```
 
    The requirements apply to intents. Outcomes, approvals and other entries that name an action
-   are only checked for a declared action type.
+   are only checked for a declared action type. `{charge}` in `target` names an argument of the
+   action: it matches any run of characters, like `*`. `policy = "ref@version"` requires a `rule`
+   with that `ref` and `version`, the short form of `rule = true` plus a field for each.
+
+   With `tenbri.init()`, the Python and Node SDKs read the same file (`./tenbri.toml`, or
+   `TENBRI_SCHEMA`) to map tool calls to actions. A tool named `issue_refund`, or an MCP tool
+   whose name ends in `__issue_refund`, is recorded as that action, its `target` filled from the
+   call's arguments and its `policy` as the rule. That is what the framework instrumentation
+   (`tenbri.instrument_claude_agent_sdk()` and the others) writes; `describe` shows it:
+
+   <Tabs syncKey="lang">
+   <TabItem label="Python">
+
+   ```python
+   import tenbri
+
+   tenbri.init("./audit/support", agent="agent:support-assistant")
+   print(tenbri.describe("mcp__billing__issue_refund", {"charge": "ch_3PqX", "amount": 40}))
+   ```
+
+   ```text
+   {'action': 'issue_refund', 'target': 'stripe:charge/ch_3PqX', 'rule': {'ref': 'rule:refund-under-100', 'version': '3', 'result': 'allow'}}
+   ```
+
+   </TabItem>
+   <TabItem label="TypeScript">
+
+   ```ts
+   import { describe, init } from 'tenbri'
+
+   await init({ stream: './audit/support', agent: 'agent:support-assistant' })
+   console.log(describe('mcp__billing__issue_refund', { charge: 'ch_3PqX', amount: 40 }))
+   ```
+
+   ```text
+   {
+     action: 'issue_refund',
+     target: 'stripe:charge/ch_3PqX',
+     rule: { ref: 'rule:refund-under-100', version: '3', result: 'allow' }
+   }
+   ```
+
+   </TabItem>
+   </Tabs>
 
 2. **Check a stream.**
 
@@ -170,21 +213,29 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
 
    ```text
    tenbri.toml: 1 action schemas, unknown actions rejected
-   audit/support seq 6: rule: required
    audit/support seq 6: approval: required
+   audit/support seq 6: rule.ref: required
+   audit/support seq 6: rule.version: required
    audit/support seq 7: action.type: `close_ticket` is not declared in tenbri.toml
    audit/support: 7 entries, 2 break their schema
    exit 1
    ```
 
-   A typo in `tenbri.toml` fails before any stream is read. Here `rule` is misspelled `rul`:
+   A typo in `tenbri.toml` fails before any stream is read. Here `approval` is misspelled
+   `approvl`:
 
    ```text
    tenbri: tenbri.toml: TOML parse error at line 7, column 1
      |
-   7 | rul = true
-     | ^^^
-   unknown field `rul`, expected one of `description`, `inputs`, `rule`, `approval`, `durability`, `target`, `fields`
+   7 | approvl = true
+     | ^^^^^^^
+   unknown field `approvl`, expected one of `description`, `inputs`, `rule`, `approval`, `durability`, `target`, `policy`, `fields`
+   ```
+
+   So does a `policy` without its version (`policy = "rule:refund-under-100"`):
+
+   ```text
+   tenbri: tenbri.toml: actions.issue_refund: policy: expected ref@version
    ```
 
    With no stream given, `schema check` only validates the file:
@@ -212,14 +263,15 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    </TabItem>
    <TabItem label="Python">
 
-   Replace `record_refund` with a call into your own code.
+   `tenbri.init()` opens a throwaway stream and reads `./tenbri.toml`, so an invalid file fails the
+   test too. Replace `record_refund` with a call into your own code.
 
    ```python title="test_audit_schema.py"
    import hashlib
    import json
    import subprocess
 
-   from tenbri import Tenbri
+   import tenbri
 
 
    def entry_hash(entry: dict) -> str:
@@ -227,28 +279,36 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
        return "sha256:" + hashlib.sha256(b"\0" + line.encode()).hexdigest()
 
 
-   def record_refund(log: Tenbri, charge: str) -> None:
+   def record_refund(charge: str) -> None:
        """What the agent writes for a refund: replace with a call into your own code."""
-       target = f"stripe:charge/{charge}"
+       log = tenbri.default()
        approval = log.append(
-           {"kind": "approval", "principal": "person:alice", "action": {"type": "issue_refund", "target": target}}
+           {
+               "kind": "approval",
+               "principal": "person:alice",
+               "action": {"type": "issue_refund", "target": f"stripe:charge/{charge}"},
+           }
        )
-       with log.run("agent:support-assistant") as run:
-           run.read("policy:refund", "14", digest="hmac-sha256:" + "9f2c41aa" * 8)
-           with run.decision(
-               "issue_refund",
-               target,
-               rule={"ref": "rule:refund-under-100", "version": "3", "result": "allow"},
-               approval={"by": approval["principal"], "entry": entry_hash(approval)},
-           ):
-               pass
+
+       @tenbri.decision(
+           "issue_refund",
+           target="stripe:charge/{charge}",
+           policy="rule:refund-under-100@3",
+           inputs=[("policy:refund", "14", "refunds under 100 EUR are automatic")],
+           approval={"by": approval["principal"], "entry": entry_hash(approval)},
+       )
+       def refund(charge: str) -> None:
+           pass  # call your payment provider here
+
+       refund(charge)
 
 
    def test_refund_entries_match_tenbri_toml(tmp_path, monkeypatch):
        monkeypatch.setenv("TENBRI_KEYS", str(tmp_path / "keys"))
        stream = tmp_path / "audit" / "support"
-       with Tenbri.open(stream, create=True) as log:
-           record_refund(log, "ch_3PqX")
+       # init() also reads ./tenbri.toml, and raises if it is invalid.
+       with tenbri.init(stream, agent="agent:support-assistant"):
+           record_refund("ch_3PqX")
 
        check = subprocess.run(
            ["tenbri", "schema", "check", "--schema", "tenbri.toml", str(stream)],
@@ -272,13 +332,14 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
 
    ```text
    E         /private/var/folders/…/test_refund_entries_match_tenb0/audit/support seq 4: approval: required
-   1 failed in 0.14s
+   1 failed in 0.19s
    ```
 
    </TabItem>
    <TabItem label="TypeScript">
 
-   Replace `recordRefund` with a call into your own code.
+   `init()` opens a throwaway stream and reads `./tenbri.toml`, so an invalid file fails the test
+   too. Replace `recordRefund` with a call into your own code.
 
    ```ts title="audit-schema.test.ts"
    import assert from 'node:assert/strict'
@@ -288,7 +349,7 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    import { tmpdir } from 'node:os'
    import { join } from 'node:path'
    import { test } from 'node:test'
-   import { Tenbri, type Entry } from 'tenbri'
+   import { decision, defaultStream, init, type Entry } from 'tenbri'
 
    function canonical(v: unknown): string {
      if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`
@@ -301,29 +362,34 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    const entryHash = (e: Entry) => 'sha256:' + createHash('sha256').update('\0' + canonical(e)).digest('hex')
 
    // What the agent writes for a refund: replace with a call into your own code.
-   async function recordRefund(log: Tenbri, charge: string): Promise<void> {
-     const target = `stripe:charge/${charge}`
-     const approval = await log.append({ kind: 'approval', principal: 'person:alice', action: { type: 'issue_refund', target } })
-     await log.run({ principal: 'agent:support-assistant' }, async (run) => {
-       run.read('policy:refund', { version: '14', digest: 'hmac-sha256:' + '9f2c41aa'.repeat(8) })
-       await run.decision(
-         {
-           action: 'issue_refund',
-           target,
-           rule: { ref: 'rule:refund-under-100', version: '3', result: 'allow' },
-           approval: { by: approval.principal, entry: entryHash(approval) },
-         },
-         async () => {},
-       )
+   async function recordRefund(charge: string): Promise<void> {
+     const log = await defaultStream()
+     const approval = await log.append({
+       kind: 'approval',
+       principal: 'person:alice',
+       action: { type: 'issue_refund', target: `stripe:charge/${charge}` },
      })
+     const refund = decision(
+       {
+         action: 'issue_refund',
+         target: 'stripe:charge/{charge}',
+         policy: 'rule:refund-under-100@3',
+         inputs: [{ ref: 'policy:refund', version: '14', content: 'refunds under 100 EUR are automatic' }],
+         approval: { by: approval.principal, entry: entryHash(approval) },
+       },
+       async ({ charge }: { charge: string }) => {
+         // call your payment provider here
+       },
+     )
+     await refund({ charge })
    }
 
    test('refund entries match tenbri.toml', async () => {
      const dir = mkdtempSync(join(tmpdir(), 'tenbri-'))
-     process.env.TENBRI_KEYS = join(dir, 'keys')
      const stream = join(dir, 'audit', 'support')
-     const log = await Tenbri.open(stream, { create: true })
-     await recordRefund(log, 'ch_3PqX')
+     // init() also reads ./tenbri.toml, and rejects if it is invalid.
+     const log = await init({ stream, keys: join(dir, 'keys'), agent: 'agent:support-assistant' })
+     await recordRefund('ch_3PqX')
      await log.close()
 
      // execFileSync throws, failing the test, when tenbri exits 1 (an entry breaks its schema) or 2.
@@ -339,9 +405,9 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
 
    ```text
    tenbri.toml: 1 action schemas, unknown actions rejected
-   /var/folders/…/tenbri-5hRPij/audit/support: 5 entries, 0 break their schema
+   /var/folders/…/tenbri-QOS9sr/audit/support: 5 entries, 0 break their schema
 
-   ✔ refund entries match tenbri.toml (147.448833ms)
+   ✔ refund entries match tenbri.toml (132.191208ms)
    ℹ tests 1
    ℹ pass 1
    ℹ fail 0
@@ -367,14 +433,16 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    </TabItem>
    <TabItem label="Python">
 
-   The binding writes to storage directly and does not apply `tenbri.toml`. Keep the test from
-   step 3, or write through `tenbrid` (the REST tab) to refuse bad entries before they are stored.
+   The binding writes to storage directly. `init()` reads `tenbri.toml` to map tool calls to
+   actions, but does not refuse an entry that breaks it. Keep the test from step 3, or write
+   through `tenbrid` (the REST tab) to refuse bad entries before they are stored.
 
    </TabItem>
    <TabItem label="TypeScript">
 
-   The binding writes to storage directly and does not apply `tenbri.toml`. Keep the test from
-   step 3, or write through `tenbrid` (the REST tab) to refuse bad entries before they are stored.
+   The binding writes to storage directly. `init()` reads `tenbri.toml` to map tool calls to
+   actions, but does not refuse an entry that breaks it. Keep the test from step 3, or write
+   through `tenbrid` (the REST tab) to refuse bad entries before they are stored.
 
    </TabItem>
    <TabItem label="REST">
@@ -412,8 +480,8 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    ```
 
    ```text
-   {"actions":{"issue_refund":{"approval":true,"description":"Refund a card charge through Stripe.","fields":{"rule.result":{"allowed":["allow"]}},"inputs":["policy:refund"],"rule":true,"target":"stripe:charge/*"}},"unknown_actions":"reject"}
-   {"error":{"code":"TENBRI_SCHEMA_VIOLATION","message":"entry 01K80B2A3B4C5D6E7F8G9H0J1K: rule: required; approval: required","violations":[{"path":"rule","message":"required"},{"path":"approval","message":"required"}]}}
+   {"actions":{"issue_refund":{"approval":true,"description":"Refund a card charge through Stripe.","fields":{"rule.result":{"allowed":["allow"]}},"inputs":["policy:refund"],"policy":"rule:refund-under-100@3","target":"stripe:charge/{charge}"}},"unknown_actions":"reject"}
+   {"error":{"code":"TENBRI_SCHEMA_VIOLATION","message":"entry 01K80B2A3B4C5D6E7F8G9H0J1K: approval: required; rule.ref: required; rule.version: required","violations":[{"path":"approval","message":"required"},{"path":"rule.ref","message":"required"},{"path":"rule.version","message":"required"}]}}
    422
    ```
 
@@ -451,7 +519,7 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
          - uses: actions/checkout@v4
          - uses: dtolnay/rust-toolchain@stable
          - name: Install tenbri
-           run: cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+           run: cargo install tenbri-cli --version 0.1.0-beta.2 --locked
          - name: Check tenbri.toml
            run: tenbri schema check --schema tenbri.toml
    ```
@@ -476,7 +544,7 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
              python-version: "3.12"
          - name: Install tenbri
            run: |
-             cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+             cargo install tenbri-cli --version 0.1.0-beta.2 --locked
              pip install --pre tenbri pytest
          - name: Check tenbri.toml
            run: tenbri schema check --schema tenbri.toml
@@ -504,7 +572,7 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
              node-version: 24
          - name: Install tenbri
            run: |
-             cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+             cargo install tenbri-cli --version 0.1.0-beta.2 --locked
              npm ci
          - name: Check tenbri.toml
            run: tenbri schema check --schema tenbri.toml
@@ -516,7 +584,7 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
    </Tabs>
 
    <Aside>
-   `--version 0.1.0-beta.1` installs the newest `0.1.0` pre-release; pin an exact version once
+   `--version 0.1.0-beta.2` installs the newest `0.1.0` pre-release; pin an exact version once
    you depend on its output. The commands in each job were run locally; the workflow files
    themselves were not run on GitHub.
    </Aside>
@@ -529,7 +597,8 @@ cargo install tenbri-server --version 0.1.0-beta.1 --locked
 sequence number and member path. It exits 1 when an entry breaks its schema and 2 when the file
 itself is invalid, so CI fails either way, and the test in your language catches a missing rule or
 approval before any real entry is written. `tenbrid` applies the same file at write time and
-refuses a breaking append with `TENBRI_SCHEMA_VIOLATION`.
+refuses a breaking append with `TENBRI_SCHEMA_VIOLATION`, and the SDKs read it to record each
+tool call as its action, with the target and rule the file declares.
 
 ## Related
 

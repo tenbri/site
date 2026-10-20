@@ -43,10 +43,10 @@ stream key fingerprint (pin it): sha256:5db31441baa2d080326d9f6c83c95319c6e64dd5
 <TabItem label="Python">
 
 ```python
-from tenbri import Tenbri
+import tenbri
 
-# create=True makes the stream and its keys when there is none.
-log = Tenbri.open("audit/support", create=True)
+# Makes the stream and its keys on first use; Tenbri.open(..., create=True) does the same.
+log = tenbri.init("audit/support")
 print("pin this:", log.fingerprint)
 ```
 
@@ -54,10 +54,10 @@ print("pin this:", log.fingerprint)
 <TabItem label="TypeScript">
 
 ```ts
-import { Tenbri } from 'tenbri'
+import { init } from 'tenbri'
 
-// create: true makes the stream and its keys when there is none.
-const log = await Tenbri.open('audit/support', { create: true })
+// Makes the stream and its keys on first use; Tenbri.open(url, { create: true }) does the same.
+const log = await init({ stream: 'audit/support' })
 console.log('pin this:', log.fingerprint)
 ```
 
@@ -78,8 +78,9 @@ tenbri verify audit/support --key sha256:5db31441baa2d080326d9f6c83c95319c6e64dd
 
 If the genesis key differs, verification fails at seq 1 with `untrusted_root`. Without `--key`,
 `verify` exits 3 and says the stream is not pinned. `query`, `tail`, `receipt create` and
-`receipt verify`, `tenbrid` (the `key` setting of a stream) and the Python and TypeScript bindings
-(the `key` option of `open`, or the argument of `verify`) take the same pin.
+`receipt verify`, `tenbrid` (the `key` setting of a stream) and the Python and TypeScript SDKs
+(the `key` option of `init()` and `Tenbri.open`, or the argument of `verify`) take the same pin
+([SDK reference](/docs/reference/sdk/#tenbriopen)).
 
 Store the fingerprint where the stream's operator cannot change it: in the auditor's own records,
 in your verifier's configuration, in a contract.

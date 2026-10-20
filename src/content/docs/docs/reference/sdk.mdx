@@ -1,0 +1,666 @@
+---
+title: Python and TypeScript SDK
+description: "The tenbri package for Python and Node.js: init(), decision, agent(), Refused, the framework instrumentation, and the stream API they are built on."
+sidebar:
+  order: 7
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The `tenbri` package for Python and Node.js writes through the same Rust core as the `tenbri` CLI
+and `tenbrid`. This page covers version `0.1.0-beta.2`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```sh
+pip install --pre tenbri
+```
+
+Python 3.10 and later. `Tenbri` blocks (the GIL is released); `AsyncTenbri` never blocks the event
+loop.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```sh
+npm install tenbri@next
+```
+
+Node 20 and later, with TypeScript types. Every call returns a Promise.
+
+</TabItem>
+</Tabs>
+
+It has two levels:
+
+- **The default stream**: [`init()`](#init) opens one stream for the process,
+  [`decision`](#decision) records each call of a function, [`agent()`](#agent) says who acts, and
+  one line [instruments an agent framework](#framework-instrumentation). Most applications need
+  only this.
+- **The stream API**: [`Tenbri.open`](#tenbriopen) and the methods on a stream (`run`, `decision`,
+  `read`, `intent`, `outcome`, `verify`, `query`). The default stream is one of these, so all of
+  them work on it too.
+
+## init
+
+Opens the process's default stream, creating the stream and its keys if there is none, and closes
+it (flushing) when the process exits.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def init(
+    stream: str | os.PathLike[str] | None = None,
+    *,
+    keys: str | os.PathLike[str] | None = None,
+    agent: Principal | None = None,
+    approver: Principal | None = None,
+    schema: str | os.PathLike[str] | None = None,
+    key: str | None = None,
+    digest_key: bytes | None = None,
+    fail_open: bool = False,
+) -> Default
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function init(options?: {
+  stream?: string | URL
+  keys?: string
+  agent?: Principal
+  approver?: Principal
+  schema?: string
+  key?: string
+  digestKey?: string | Uint8Array
+  failOpen?: boolean
+}): Promise<Default>
+```
+
+</TabItem>
+</Tabs>
+
+An argument given wins over its environment variable:
+
+| Python | TypeScript | Variable | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| `stream` | `stream` | `TENBRI_STREAM` | required | The stream: a directory, `file://...`, `s3://bucket/prefix` or `r2://bucket/prefix` ([Storage](/docs/reference/storage/)) |
+| `keys` | `keys` | `TENBRI_KEYS` | `~/.config/tenbri/keys` | The keys directory, never inside the stream |
+| `agent` | `agent` | `TENBRI_AGENT` | none | Who acts when nothing narrower says ([principal resolution](#who-acts)) |
+| `approver` | `approver` | `TENBRI_APPROVER` | none | Who answers the frameworks' approval prompts (`person:alice`) |
+| `schema` | `schema` | `TENBRI_SCHEMA` | `./tenbri.toml` when there is one | The action schemas, read to [map tool calls to actions](/docs/reference/schemas/#in-the-sdks) |
+| `key` | `key` | | none | The genesis key to pin: `sha256:...` or `ed25519:...` |
+| `digest_key` | `digestKey` | | the local key store | Keys input digests yourself instead of with the stream's data keys ([Privacy](/docs/concepts/privacy/#input-digests)) |
+| `fail_open` | `failOpen` | | `false` | Let a decorated function run, unrecorded and with a warning, when its intent cannot be written. By default it does not run. |
+
+- The stream is opened with `create`: the first `init()` on an empty location makes the stream
+  and its keys, like `tenbri init`. Later calls open it.
+- The schema file is checked as `tenbri schema check` checks it; an invalid one fails `init()` with
+  the same message. The SDKs do not check entries against it.
+- Calling `init()` again closes the previous default and opens the new one.
+- Python: `init()` returns the open stream, and closes it at interpreter exit (`atexit`).
+  `with tenbri.init(...) as log:` closes it at the end of the block instead.
+- TypeScript: `init()` returns a Promise; awaiting it is optional, because a decision waits for it
+  (and throws what it threw). It is closed on the process's `beforeExit`.
+  `await using log = await init(...)` closes it at the end of the scope.
+- Without a stream: `InvalidRequestError`, `no stream: pass tenbri.init(stream) or set
+  TENBRI_STREAM to a directory or s3://bucket/prefix` (TypeScript: `pass init({ stream })`).
+
+The value returned is a `Default`: a [`Tenbri`](#tenbriopen) stream with the settings the rest of
+the process uses, `agent`, `approver`, `actions` (the action schemas of `tenbri.toml`, by type) and
+`fail_open` (`failOpen`). In Python, `.aio` is the same stream as an `AsyncTenbri`.
+
+`tenbri.default()` (Python) and `defaultStream()` (TypeScript, a Promise) return it; before
+`init()`, they fail with `InvalidRequestError`: `Tenbri is not initialized: call tenbri.init()
+first` (`call init() first`).
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+import tenbri
+
+tenbri.init()  # TENBRI_STREAM, TENBRI_AGENT...
+
+with tenbri.init("audit/support", agent="agent:support") as log:  # scoped to the block
+    print(log.fingerprint)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+import { init } from 'tenbri'
+
+init() // TENBRI_STREAM, TENBRI_AGENT...
+
+{
+  await using log = await init({ stream: 'audit/support', agent: 'agent:support' }) // scoped
+  console.log(log.fingerprint)
+}
+```
+
+</TabItem>
+</Tabs>
+
+## decision
+
+Records each call of a function as a decision on the default stream: the intent is durable before
+the function runs, then the outcome follows.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def decision(
+    action: str,
+    target: str | Callable[..., str] | None = None,
+    *,
+    policy: str | None = None,
+    inputs: Iterable[Pin] | Callable[..., Iterable[Pin]] | None = None,
+    subject: str | Callable[..., str] | None = None,
+    principal: Principal | None = None,
+    fail_open: bool | None = None,
+    **fields: Any,
+) -> Callable[[F], F]
+```
+
+A decorator, of sync and async functions alike (an async function writes through `.aio`, without
+blocking the event loop).
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function decision<A extends unknown[], R>(
+  options: {
+    action: string
+    target?: string | ((...args: A) => string)
+    subject?: string | ((...args: A) => string)
+    policy?: string
+    inputs?: PinSpec[] | ((...args: A) => PinSpec[])
+    principal?: Principal
+    failOpen?: boolean
+    // any other member of a draft entry
+  },
+  fn: (...args: A) => R | Promise<R>,
+): (...args: A) => Promise<R>
+```
+
+Returns a wrapped function, always async.
+
+</TabItem>
+</Tabs>
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `action` | required | The action type (`action.type`) |
+| `target` | none | A template of the arguments, or a function of them: `action.target` |
+| `subject` | none | A template or function: the entry's `subject`, and the key its input digests use |
+| `policy` | none | `ref@version` (`policy:refund@14`): recorded as `rule: {ref, version, result: "allow"}`. Split at the last `@`; anything else fails with `policy <value>: expected ref@version`. |
+| `inputs` | none | What the decision relied on, pinned with a keyed digest. Python: `(ref, version, content)` tuples, or `{"ref", "version", "content"}` or `{"ref", "version", "digest"}`; TypeScript: `{ ref, version, content }` or `{ ref, version, digest }`. Or a function of the arguments returning them. |
+| `principal` | see [Who acts](#who-acts) | Who acts: `agent:support`, `{kind, id}`, or a bare id (an agent) |
+| `fail_open` (`failOpen`) | `init()`'s | Run the function, unrecorded and with a warning, when the intent cannot be written |
+| other fields | | Any other member of a draft entry (`ext`, `links`, `trace`...), copied into the intent |
+
+### Outcomes
+
+| The function | Outcome `status` | Then |
+| --- | --- | --- |
+| Returns | `ok` | Its value is returned |
+| Raises (throws) `Refused` | `refused` | Re-raised |
+| Raises any other exception | `error` | Re-raised |
+| Is cancelled: Python `CancelledError`, `KeyboardInterrupt`; TypeScript an `AbortError` | `unknown` | Re-raised |
+
+If the intent cannot be written, the function does not run and the `TenbriError` propagates
+(fail closed), unless `fail_open` is set. If the outcome cannot be written, the function's result
+stands: a warning is logged, and the open intent is reconciled as `unknown` by the stream's next
+writer.
+
+### Templates
+
+`target` and `subject` strings are templates: each `{name}` is replaced with an argument, and
+`{name.key}` reads into it (a key of a mapping, or an attribute in Python). A missing argument
+fails the call, before the function runs, with `InvalidRequestError`: `'x:{missing}': no argument
+'missing'` (TypeScript: `"x:{missing}": no argument missing`).
+
+- Python binds the template to the function's parameters by name, defaults included:
+  `"stripe:{charge}"` is the `charge` argument, however it was passed.
+- TypeScript has no parameter names: `{charge}` reads the first argument's `charge` member, and
+  `{0}`, `{1}` are positional arguments (`{0.id}` reads the first argument's `id`).
+
+### Who acts
+
+The principal is, in order: `principal=`; else the innermost [`agent()`](#agent) scope; else
+`init(agent=...)` or `TENBRI_AGENT`. With none, the call fails with `InvalidRequestError`:
+`no principal: pass agent= to tenbri.init(), set TENBRI_AGENT, or use with
+tenbri.agent("agent:...")` (TypeScript: `no principal: pass agent to init(), set TENBRI_AGENT, or
+run in agent('agent:...', fn)`). Nothing is guessed.
+
+### Inputs and digests
+
+Each input is pinned with the keyed digest of its content: under `digest_key` if `init()` was
+given one, else under the decision's `subject`'s data key (the tenant's when there is no subject)
+from the stream's local key store, made on first use. Erasing the subject with `tenbri erase`
+leaves its digests unconfirmable ([Privacy](/docs/concepts/privacy/#input-digests)).
+
+In Python, an intent also gets `trace` from the active OpenTelemetry span when OpenTelemetry is
+installed and tracing.
+
+### Example
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+import asyncio
+import tenbri
+
+tenbri.init("audit/support", agent="agent:support")
+
+
+@tenbri.decision(
+    "issue_refund",
+    target="stripe:{charge}",
+    policy="policy:refund@14",
+    subject="{customer}",
+    inputs=[("policy:refund", "14", b"refunds under 500 are automatic")],
+)
+def refund(charge: str, amount: int, customer: str) -> str:
+    if amount > 500:
+        raise tenbri.Refused("over the ceiling")
+    return "re_1"
+
+
+@tenbri.decision("reply_ticket", target="zendesk:ticket/{ticket.id}")
+async def reply(ticket: dict) -> None: ...
+
+
+print(refund("ch_123", 20, "subj_7f3c91d2"))
+try:
+    refund("ch_124", 900, "subj_7f3c91d2")
+except tenbri.Refused as e:
+    print("Refused:", e)
+with tenbri.agent("agent:billing"):
+    asyncio.run(reply({"id": 42}))
+
+for m in tenbri.default().query(action="issue_refund"):
+    e = m.entry
+    print(e["seq"], e["phase"], e.get("status"), e["action"]["target"], e.get("rule"))
+```
+
+```text
+re_1
+Refused: over the ceiling
+3 intent None stripe:ch_123 {'ref': 'policy:refund', 'result': 'allow', 'version': '14'}
+4 outcome ok stripe:ch_123 None
+5 intent None stripe:ch_124 {'ref': 'policy:refund', 'result': 'allow', 'version': '14'}
+6 outcome refused stripe:ch_124 None
+```
+
+The intents carry `subject: subj_7f3c91d2` and
+`inputs: [{"ref": "policy:refund", "version": "14", "digest": "hmac-sha256:e134149c…"}]`; the
+`reply_ticket` entries (seq 7 and 8) are by `agent:billing`, target `zendesk:ticket/42`.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+import { Refused, agent, decision, defaultStream, init } from 'tenbri'
+
+init({ stream: 'audit/support', agent: 'agent:support' })
+
+const refund = decision(
+  {
+    action: 'issue_refund',
+    target: 'stripe:{charge}',
+    policy: 'policy:refund@14',
+    subject: '{customer}',
+    inputs: [{ ref: 'policy:refund', version: '14', content: 'refunds under 500 are automatic' }],
+  },
+  async ({ charge, amount, customer }: { charge: string; amount: number; customer: string }) => {
+    if (amount > 500) throw new Refused('over the ceiling')
+    return 're_1'
+  },
+)
+const reply = decision({ action: 'reply_ticket', target: 'zendesk:ticket/{0.id}' }, async (ticket: { id: number }) => {})
+
+console.log(await refund({ charge: 'ch_123', amount: 20, customer: 'subj_7f3c91d2' }))
+try {
+  await refund({ charge: 'ch_124', amount: 900, customer: 'subj_7f3c91d2' })
+} catch (e) {
+  console.log(`${(e as Error).name}: ${(e as Error).message}`)
+}
+await agent('agent:billing', () => reply({ id: 42 }))
+
+const log = await defaultStream()
+for (const m of await log.query({ action: 'issue_refund' })) {
+  console.log(m.entry.seq, m.entry.phase, m.entry.status, m.entry.action?.target)
+}
+```
+
+```text
+re_1
+Refused: over the ceiling
+3 intent undefined stripe:ch_123
+4 outcome ok stripe:ch_123
+5 intent undefined stripe:ch_124
+6 outcome refused stripe:ch_124
+```
+
+</TabItem>
+</Tabs>
+
+## agent
+
+Sets the principal for a scope: decisions in it, and in the tasks, threads and async work it
+starts, are by that principal unless they name their own.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+@contextlib.contextmanager
+def agent(principal: Principal) -> Iterator[None]
+```
+
+```python
+with tenbri.agent("agent:billing"):
+    refund("ch_123", 20, "subj_7f3c91d2")
+```
+
+A `ContextVar`: `asyncio` tasks and `contextvars.copy_context()` carry it.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function agent<T>(principal: Principal, fn: () => T): T
+```
+
+```ts
+await agent('agent:billing', () => refund({ charge: 'ch_123', amount: 20, customer: 'subj_7f3c91d2' }))
+```
+
+An `AsyncLocalStorage` scope. `scopedAgent()` returns the innermost scope's principal, if any.
+
+</TabItem>
+</Tabs>
+
+A `Principal` is `"agent:support"`, `"person:alice"`, `"service:billing"`, a bare id (`"support"`,
+an agent), or `{kind, id}` with `kind` one of `agent`, `person`, `service`.
+
+## Refused
+
+Raise (throw) it inside a decision when your own policy refuses the action: the outcome is recorded
+as `refused`, and it propagates.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+class Refused(Exception): ...
+
+raise tenbri.Refused("over the ceiling")
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+class Refused extends Error {}
+
+throw new Refused('over the ceiling')
+```
+
+</TabItem>
+</Tabs>
+
+It works the same in the stream API's decisions (`log.decision`, `run.decision`).
+
+## Framework instrumentation
+
+One call records every tool call of an agent framework on the default stream: an intent before the
+tool runs, its outcome after, and approvals through the framework's own approval flow. Call it once,
+after `init()`.
+
+| Framework | Python (`tenbri.`) | TypeScript | Package to install |
+| --- | --- | --- | --- |
+| Claude Agent SDK | `instrument_claude_agent_sdk(**options)` | `instrumentClaudeAgentSdk(options, o)` from `@tenbri/claude-agent-sdk` | `tenbri-claude-agent-sdk`, `@tenbri/claude-agent-sdk` |
+| OpenAI Agents SDK | `instrument_openai_agents(**options)` | `instrumentOpenAIAgents(o)` from `@tenbri/openai-agents` | `tenbri-openai-agents`, `@tenbri/openai-agents` |
+| LangChain and LangGraph | `instrument_langchain(**options)` | `instrumentLangChain(o)` from `@tenbri/langgraph` | `tenbri-langgraph`, `@tenbri/langgraph` |
+
+In Python the functions are in `tenbri` and import the adapter package; without it they raise
+`ImportError` naming the `pip install --pre` command. In TypeScript they are exported by the adapter
+packages. `instrumentClaudeAgentSdk` wraps the `Options` of one `query()` and returns them; the
+others patch the framework for every run from then on.
+
+Options, all optional:
+
+| Python | TypeScript | Meaning |
+| --- | --- | --- |
+| `actions` | `actions` | Per tool name: `{"action", "target", "subject", "policy"}`, over the action schemas of `tenbri.toml` ([In the SDKs](/docs/reference/schemas/#in-the-sdks)) |
+| `agent` | `agent` | Who acts. Claude and LangChain only; the OpenAI Agents SDK records `agent:<the agent's name>`. Default: the `agent()` scope, else (LangChain) the agent's name, else `init()`'s. |
+| `approver` | `approver` | Who answers an approval prompt: a principal, or a function of the framework's call. Default `init(approver=...)`, else `TENBRI_APPROVER`. |
+| `tools` | `tools` | Which tools to record: names, or a predicate |
+| `fail_open` | `failOpen` | Default `init()`'s |
+| `timeout` | `timeout` | Claude only: how long a hook waits for its write before failing: seconds in Python (default `2.0`), milliseconds in TypeScript (default `2000`) |
+| `subject` | `subject` | OpenAI Agents SDK only: the `subject` of every entry |
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+import tenbri
+
+tenbri.init()
+tenbri.instrument_claude_agent_sdk()  # or instrument_openai_agents(), instrument_langchain()
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+import { query } from '@anthropic-ai/claude-agent-sdk'
+import { instrumentClaudeAgentSdk } from '@tenbri/claude-agent-sdk'
+import { init } from 'tenbri'
+
+init()
+for await (const m of query({ prompt, options: instrumentClaudeAgentSdk({ mcpServers, canUseTool }) })) {
+  // ...
+}
+```
+
+</TabItem>
+</Tabs>
+
+What each framework records, and its lower-level hooks, are in [Adapters](/docs/adapters/).
+
+### describe
+
+How a tool call becomes intent fields, exposed for your own integrations:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+def describe(tool: str, args: Mapping[str, Any], actions: Actions | None = None) -> dict[str, Any]
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+function describe(tool: string, args: Record<string, any>, actions?: Actions): Described
+```
+
+</TabItem>
+</Tabs>
+
+It returns `action` (when it differs from the tool's name), `target`, `subject` and `rule`, from
+`actions` over the default stream's action schemas. The rules and an example are in
+[Action schemas](/docs/reference/schemas/#in-the-sdks).
+
+## Tenbri.open
+
+The stream API: open a stream yourself, to hold several, or to see every call.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+class Tenbri:
+    @classmethod
+    def open(
+        cls,
+        url: str | os.PathLike[str],
+        *,
+        keys: str | os.PathLike[str] | None = None,
+        key: str | None = None,
+        create: bool = False,
+        digest_key: bytes | None = None,
+    ) -> Tenbri
+
+class AsyncTenbri:
+    @classmethod
+    async def open(...) -> AsyncTenbri  # the same arguments
+```
+
+`AsyncTenbri` has the same methods as coroutines; `async with` closes it.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+class Tenbri {
+  static open(
+    url: string | URL,
+    options?: { keys?: string; key?: string; create?: boolean; digestKey?: string | Uint8Array },
+  ): Promise<Tenbri>
+}
+```
+
+</TabItem>
+</Tabs>
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `url` | required | A directory, `file://...`, `s3://bucket/prefix` or `r2://bucket/prefix` (credentials from `AWS_*`; `CLOUDFLARE_ACCOUNT_ID` for R2) |
+| `keys` | `$TENBRI_KEYS`, else `~/.config/tenbri/keys` | The keys directory. Without the stream's keys there, the stream opens read-only: `verify` and `query` work, writes fail with `NoSessionKeyError`. |
+| `key` | none | Pins the genesis key (`sha256:...` or `ed25519:...`) for writes, `verify` and `query` |
+| `create` | `false` | Create the stream and its keys if there is none |
+| `digest_key` (`digestKey`) | none: the local key store | Keys input digests with HMAC-SHA-256 directly |
+
+A stream has `id` (`tnb1:...`), `fingerprint` (what a verifier pins) and `writable`.
+
+### Methods
+
+| Python | TypeScript | Returns | Meaning |
+| --- | --- | --- | --- |
+| `run(principal)` | `run({ principal }, fn)` | a `Run` (Python, a context manager); `fn`'s result | Decisions by one principal; what it reads is pinned to its next decision |
+| `run.read(ref, version, content=None, *, digest=None)` | `run.read(ref, { version, content?, digest? })` | | Records a read: the next decision lists it among its `inputs`, with the keyed digest of `content` (or `digest` as given) |
+| `decision(action, target=None, *, principal=None, **fields)` | `decision({ action, target, ...fields }, fn)` | Python: a context manager and decorator; TypeScript: `fn`'s result | Intent before, outcome after: `ok`, `refused` on `Refused`, `error` otherwise. As a Python decorator, `target` may be a function of the arguments. Also on `run`. |
+| `intent(draft=None, /, **fields)` | `intent(draft)` | the entry as stored | Records an intent, durable before the action runs |
+| `outcome(intent, status="ok", /, **fields)` | `outcome(intent, status = 'ok', fields)` | the entry as stored | Records the outcome of `intent` (the entry or its id); `principal`, `action`, `subject` and `source` default to the intent's |
+| `append(entry)` | `append(entry)` | the entry as stored | Appends any draft (`note`, `approval`, `decision`). Give it an `id` (`new_id()`, `newId()`) to make retries idempotent. |
+| `digest(content, *, subject=None)` | `digest(content, { subject })` | `hmac-sha256:<hex>` | The keyed digest of an input: with `digest_key` if given, else `subject`'s data key (the tenant's without one) from the local key store, made on first use |
+| `verify(key=None)` | `verify(key?)` | a report | Checks the whole stream against `key`, else the key pinned at open. `ok` only when nothing is broken and a key was pinned. |
+| `query(*, action, target, principal, subject, inputs, after_seq=0, limit)` | `query({ action, target, principal, subject, inputs, afterSeq, limit })` | matches | Entries matching every filter, in order, each with `verification` (`verified`, `unpinned` with no key pinned, or `broken`) and `entry`. `inputs` are `"ref@version"` strings or `(ref, version)` pairs. |
+| `flush()` | `flush()` | | Waits for every append queued so far |
+| `close()` | `close()` | | Flushes and stops the writer; reads still work. Python: `with` closes; TypeScript: `await using`. |
+
+`run.read` digests under the tenant's data key (it has no subject); to digest under a subject's
+key, pass `digest=log.digest(content, subject=...)`, or use `inputs` on the high-level `decision`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+from tenbri import Tenbri
+
+log = Tenbri.open("audit/support", create=True)
+print("pin this:", log.fingerprint)
+
+with log.run("agent:support-assistant") as run:
+    run.read("policy:refund", "14", b"refunds under 50 EUR are automatic")
+    with run.decision("issue_refund", "stripe:ch_123") as d:
+        pass  # issue the refund here; raise Refused(...) when your policy says no
+print(d.intent["inputs"])
+
+report = log.verify(log.fingerprint)
+print(report.ok, report.entries)
+for m in log.query(inputs=["policy:refund@14"]):
+    print(m.verification, m.entry["action"])
+log.close()
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+import { Tenbri } from 'tenbri'
+
+const log = await Tenbri.open('audit/support', { create: true })
+console.log('pin this:', log.fingerprint)
+
+await log.run({ principal: 'agent:support-assistant' }, async (run) => {
+  run.read('policy:refund', { version: '14', content: 'refunds under 50 EUR are automatic' })
+  await run.decision({ action: 'issue_refund', target: 'stripe:ch_123' }, async (intent) => {
+    console.log(intent.inputs) // issue the refund here; throw new Refused(...) when your policy says no
+  })
+})
+
+const report = await log.verify(log.fingerprint!)
+console.log(report.ok, report.entries)
+for (const m of await log.query({ inputs: ['policy:refund@14'] })) console.log(m.verification, m.entry.action)
+await log.close()
+```
+
+</TabItem>
+</Tabs>
+
+Python prints (the digest differs per stream, its data key being random):
+
+```text
+pin this: sha256:026cfe12eeed02fe2fcde877832504ebe6289de02ac812f0fdbf07f0a4a1397b
+[{'digest': 'hmac-sha256:9e7aa6048ae664013cd18b24200969866b3db8fba53fb1f4a71a8f8a05c043a7', 'ref': 'policy:refund', 'version': '14'}]
+True 4
+unpinned {'target': 'stripe:ch_123', 'type': 'issue_refund'}
+```
+
+`query` says `unpinned` because the stream was opened without `key`; `verify` was given the
+fingerprint, so `report.ok` is true.
+
+## Errors
+
+Every failure is a `TenbriError` with a stable `code`, shared with `tenbrid`
+([API](/docs/reference/api/#errors)), `reason` (the format v1 code, where there is one,
+[Errors](/docs/reference/errors/)) and `id` (the entry being written: retry with it).
+
+| Class | `code` |
+| --- | --- |
+| `InvalidRequestError` | `TENBRI_INVALID_REQUEST`: also no stream, no principal, a missing template argument, a malformed `policy` |
+| `InvalidEntryError` | `TENBRI_INVALID_ENTRY` |
+| `NotFoundError` | `TENBRI_NOT_FOUND` |
+| `IdempotencyConflictError` | `TENBRI_IDEMPOTENCY_CONFLICT` |
+| `WriteConflictError` | `TENBRI_WRITE_CONFLICT` |
+| `DeadlineExceededError` | `TENBRI_DEADLINE_EXCEEDED` |
+| `StoreUnavailableError` | `TENBRI_STORE_UNAVAILABLE` |
+| `NoSessionKeyError` | `TENBRI_NO_SESSION_KEY`: the stream is read-only on this machine |
+| `StreamBrokenError` | `TENBRI_STREAM_BROKEN` |
+
+With `fail_open`, a decorated function whose intent fails with any of these runs anyway, and a
+warning is logged:
+
+```text
+tenbri: noop runs unrecorded (fail-open): read-only: no stream key for tnb1:7975387dece6df1938db869d9f2844d2 in otherkeys
+```
+
+<Aside type="note">
+The SDKs do not check action schemas, rotate signing keys or seal encrypted bodies. Schemas are
+checked by `tenbrid` and `tenbri schema check`; keys and bodies are in the Rust crates
+([Keys](/docs/concepts/keys/), [Privacy](/docs/concepts/privacy/)).
+</Aside>

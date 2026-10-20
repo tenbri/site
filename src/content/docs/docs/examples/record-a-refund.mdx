@@ -22,7 +22,7 @@ the page follows it.
 <TabItem label="CLI">
 
 ```sh
-cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+cargo install tenbri-cli --version 0.1.0-beta.2 --locked
 ```
 
 </TabItem>
@@ -97,8 +97,8 @@ bun add tenbri@next
 `curl`, plus the `tenbri` CLI to create the stream and `tenbrid` to serve it:
 
 ```sh
-cargo install tenbri-cli --version 0.1.0-beta.1 --locked
-cargo install tenbri-server --version 0.1.0-beta.1 --locked
+cargo install tenbri-cli --version 0.1.0-beta.2 --locked
+cargo install tenbri-server --version 0.1.0-beta.2 --locked
 ```
 
 </TabItem>
@@ -198,20 +198,19 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    </TabItem>
    <TabItem label="Python">
 
-   `Tenbri.open(..., create=True)` creates the stream and its keys when there is none.
-   `run.read` pins what the agent read to its next decision, with the keyed digest of the content.
-   `run.decision` writes the intent before the block runs and the outcome when it exits: `ok`,
-   `refused` if the block raises `Refused`, `error` for any other exception.
+   `tenbri.init()` opens the stream, creating it and its keys on first use, and closes it (flushing)
+   at exit. `@tenbri.decision` makes each call of a function a decision: the intent is durable
+   before the function runs, then the outcome follows: `ok`, `refused` if it raises
+   `tenbri.Refused`, `error` for any other exception. `target` is a template of the function's
+   arguments, `policy` (`ref@version`) is the rule that allowed it, and `inputs` pins what the agent
+   read, with the keyed digest of its content.
 
    ```python title="refund.py"
    import hashlib
    import json
    import os
 
-   from tenbri import Tenbri
-
-   ACTION = "issue_refund"
-   TARGET = "stripe:charge/ch_3PqX"
+   import tenbri
 
 
    def entry_hash(entry: dict) -> str:
@@ -220,13 +219,10 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
        return "sha256:" + hashlib.sha256(b"\0" + line.encode()).hexdigest()
 
 
-   def issue_refund(target: str) -> None:
-       print("refunding", target)  # call your payment provider here
-
-
-   log = Tenbri.open(
+   # Opens the stream, creating it and its keys on first use; closed (flushed) at exit.
+   log = tenbri.init(
        "./audit/support",
-       create=True,
+       agent="agent:support-assistant",
        digest_key=os.environ["TENBRI_DIGEST_KEY"].encode(),
    )
    print("pin this:", log.fingerprint)
@@ -236,26 +232,26 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
        {
            "kind": "approval",
            "principal": "person:alice",
-           "action": {"type": ACTION, "target": TARGET},
+           "action": {"type": "issue_refund", "target": "stripe:charge/ch_3PqX"},
        }
    )
    print("approval", approval["seq"], entry_hash(approval))
 
-   # 2. The agent reads the policy, then decides. The intent is durable before the block runs,
-   #    and the outcome (ok, refused or error) is written when it exits.
-   with log.run("agent:support-assistant") as run:
-       run.read("policy:refund", "14", "refunds under 100 EUR are automatic")
-       with run.decision(
-           ACTION,
-           TARGET,
-           rule={"ref": "rule:refund-under-100", "version": "3", "result": "allow"},
-           approval={"by": approval["principal"], "entry": entry_hash(approval)},
-       ) as d:
-           issue_refund(TARGET)
 
-   print("intent", d.intent["seq"], d.intent["id"])
-   print("outcome", d.outcome["seq"], d.outcome["status"])
-   log.close()
+   # 2. The agent's refund. Each call is a decision: the intent is durable before the function
+   #    runs, and the outcome (ok, refused or error) is written when it returns or raises.
+   @tenbri.decision(
+       "issue_refund",
+       target="stripe:charge/{charge}",
+       policy="rule:refund-under-100@3",
+       inputs=[("policy:refund", "14", "refunds under 100 EUR are automatic")],
+       approval={"by": approval["principal"], "entry": entry_hash(approval)},
+   )
+   def issue_refund(charge: str) -> None:
+       print("refunding", charge)  # call your payment provider here
+
+
+   issue_refund("ch_3PqX")
    ```
 
    ```sh
@@ -263,27 +259,28 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```text
-   pin this: sha256:880e1b8e200041f24082c70119104c2ccb4943e5f4fbaf4ea4acac31bfdf5b5d
-   approval 3 sha256:58548abce620767b44083ed7a378001e3f97f388386113869c8f0377dc63db98
-   refunding stripe:charge/ch_3PqX
-   intent 4 01M5CWGXGXV3CAA8N0PBQC5H6A
-   outcome 5 ok
+   pin this: sha256:748b9629d53da9e5d9d596d5f2e5f95238e8cce81c3467e4cb39d381085e5128
+   approval 3 sha256:e49edf8b972715046c3d727b34a113ad990eb066d10cd7608aa1179daee330c7
+   refunding ch_3PqX
    ```
+
+   Other fields of the intent, here `approval`, pass through the decorator as they are. For an
+   approval that differs per call, write the decision with `log.run(...)` and `run.decision(...,
+   approval=...)` instead (see the [Python package](https://github.com/tenbri/tenbri/tree/main/bindings/python)).
 
    </TabItem>
    <TabItem label="TypeScript">
 
-   `Tenbri.open(..., { create: true })` creates the stream and its keys when there is none.
-   `run.read` pins what the agent read to its next decision, with the keyed digest of the content.
-   `run.decision` writes the intent before the callback runs and the outcome when it settles: `ok`,
-   `refused` if it throws `Refused`, `error` for anything else it throws.
+   `init()` opens the stream, creating it and its keys on first use, and closes it (flushing)
+   before the process exits. `decision(options, fn)` makes each call of `fn` a decision: the intent
+   is durable before `fn` runs, then the outcome follows: `ok`, `refused` if it throws `Refused`,
+   `error` for anything else it throws. `target` is a template of the arguments (`{charge}` reads
+   the first argument's `charge`), `policy` (`ref@version`) is the rule that allowed it, and
+   `inputs` pins what the agent read, with the keyed digest of its content.
 
    ```ts title="refund.ts"
    import { createHash } from 'node:crypto'
-   import { Tenbri, type Entry } from 'tenbri'
-
-   const action = 'issue_refund'
-   const target = 'stripe:charge/ch_3PqX'
+   import { decision, init, type Entry } from 'tenbri'
 
    // SHA-256 of a zero byte and the stored line (canonical JSON), as sha256:<hex>.
    function canonical(v: unknown): string {
@@ -298,12 +295,10 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
      return 'sha256:' + createHash('sha256').update('\0' + canonical(entry)).digest('hex')
    }
 
-   async function issueRefund(target: string): Promise<void> {
-     console.log('refunding', target) // call your payment provider here
-   }
-
-   const log = await Tenbri.open('./audit/support', {
-     create: true,
+   // Opens the stream, creating it and its keys on first use; closed (flushed) before exit.
+   const log = await init({
+     stream: './audit/support',
+     agent: 'agent:support-assistant',
      digestKey: process.env.TENBRI_DIGEST_KEY!,
    })
    console.log('pin this:', log.fingerprint)
@@ -312,28 +307,26 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    const approval = await log.append({
      kind: 'approval',
      principal: 'person:alice',
-     action: { type: action, target },
+     action: { type: 'issue_refund', target: 'stripe:charge/ch_3PqX' },
    })
    console.log('approval', approval.seq, entryHash(approval))
 
-   // 2. The agent reads the policy, then decides. The intent is durable before the callback runs,
-   //    and the outcome (ok, refused or error) is written when it returns or throws.
-   await log.run({ principal: 'agent:support-assistant' }, async (run) => {
-     run.read('policy:refund', { version: '14', content: 'refunds under 100 EUR are automatic' })
-     await run.decision(
-       {
-         action,
-         target,
-         rule: { ref: 'rule:refund-under-100', version: '3', result: 'allow' },
-         approval: { by: approval.principal, entry: entryHash(approval) },
-       },
-       async (intent) => {
-         console.log('intent', intent.seq, intent.id)
-         await issueRefund(target)
-       },
-     )
-   })
-   await log.close()
+   // 2. The agent's refund. Each call is a decision: the intent is durable before the function
+   //    runs, and the outcome (ok, refused or error) is written when it returns or throws.
+   const issueRefund = decision(
+     {
+       action: 'issue_refund',
+       target: 'stripe:charge/{charge}',
+       policy: 'rule:refund-under-100@3',
+       inputs: [{ ref: 'policy:refund', version: '14', content: 'refunds under 100 EUR are automatic' }],
+       approval: { by: approval.principal, entry: entryHash(approval) },
+     },
+     async ({ charge }: { charge: string }) => {
+       console.log('refunding', charge) // call your payment provider here
+     },
+   )
+
+   await issueRefund({ charge: 'ch_3PqX' })
    ```
 
    ```sh
@@ -341,11 +334,14 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```text
-   pin this: sha256:f473143f58376df588970d1c67e14f182abfe1f647a20ca3216004b3e3e036d2
-   approval 3 sha256:14f6ff18cedbc2c36afea4455e56591c5cd1e63c86c7ad00f732bd903c8f5554
-   intent 4 01M5CWHFDQ010Y6RTHHXFG0TNK
-   refunding stripe:charge/ch_3PqX
+   pin this: sha256:5ceeb6fbb63db3fb24152718227dbc4c7addc0acbcdb086143ce2a51d2fd696d
+   approval 3 sha256:658e0ca3690cca184a04b7b894f967910f6e1e460ee1743dea64afce4214df2a
+   refunding ch_3PqX
    ```
+
+   Other fields of the intent, here `approval`, pass through `decision` as they are. For an
+   approval that differs per call, write the decision with `log.run(...)` and `run.decision(...)`
+   instead (see the [Node package](https://github.com/tenbri/tenbri/tree/main/bindings/node)).
 
    </TabItem>
    <TabItem label="REST">
@@ -397,7 +393,7 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```text
-   tenbrid 0.1.0-beta.1: REST on http://127.0.0.1:7070, gRPC on 127.0.0.1:7071, 1 streams
+   tenbrid 0.1.0-beta.2: REST on http://127.0.0.1:7070, gRPC on 127.0.0.1:7071, 1 streams
    ```
 
    In another terminal (with `TENBRI_DIGEST_KEY` set), Alice approves. Every write carries an
@@ -471,11 +467,13 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    <Tabs syncKey="lang">
    <TabItem label="CLI">
 
-   `--verify` checks the answers against the stream itself, even when a query index exists.
+   Without a query index, `query` reads and verifies the whole stream, so each row is
+   `verified`. With one (`tenbri index rebuild`), rows are `indexed`: each is checked against the
+   batch in storage that holds it, and a batch edited on disk fails the query with exit 1.
 
    ```sh
    PIN=sha256:4282909ee7474c3eeeb243ba852f77da5b1f10dc68e6a83c4b6b26ada3749123
-   tenbri query audit/support --action issue_refund --key $PIN --verify \
+   tenbri query audit/support --action issue_refund --key $PIN \
      | jq -c '{verification, seq, kind: .entry.kind, phase: .entry.phase, status: .entry.status, approved_by: .entry.approval.by.id}'
    tenbri verify audit/support --key $PIN
    ```
@@ -507,14 +505,14 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```sh
-   PIN=sha256:880e1b8e200041f24082c70119104c2ccb4943e5f4fbaf4ea4acac31bfdf5b5d python check.py
+   PIN=sha256:748b9629d53da9e5d9d596d5f2e5f95238e8cce81c3467e4cb39d381085e5128 python check.py
    ```
 
    ```text
    verified 3 approval - -
    verified 4 decision intent -
    verified 5 decision outcome ok
-   ok: True entries: 5 pinned to: sha256:880e1b8e200041f24082c70119104c2ccb4943e5f4fbaf4ea4acac31bfdf5b5d
+   ok: True entries: 5 pinned to: sha256:748b9629d53da9e5d9d596d5f2e5f95238e8cce81c3467e4cb39d381085e5128
    ```
 
    </TabItem>
@@ -533,14 +531,14 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```sh
-   PIN=sha256:f473143f58376df588970d1c67e14f182abfe1f647a20ca3216004b3e3e036d2 node check.ts
+   PIN=sha256:5ceeb6fbb63db3fb24152718227dbc4c7addc0acbcdb086143ce2a51d2fd696d node check.ts
    ```
 
    ```text
    verified 3 approval - -
    verified 4 decision intent -
    verified 5 decision outcome ok
-   ok: true entries: 5 pinned to: sha256:f473143f58376df588970d1c67e14f182abfe1f647a20ca3216004b3e3e036d2
+   ok: true entries: 5 pinned to: sha256:5ceeb6fbb63db3fb24152718227dbc4c7addc0acbcdb086143ce2a51d2fd696d
    ```
 
    </TabItem>

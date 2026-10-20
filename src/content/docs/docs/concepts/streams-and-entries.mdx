@@ -174,6 +174,48 @@ A decision is written twice:
 Every intent ends in exactly one outcome. An outcome must name an intent that appears earlier in
 the same stream and has no outcome yet; otherwise it fails with `bad_intent`.
 
+The Python and TypeScript SDKs do both around a function: the intent is written before it runs
+(if it cannot be, the function does not run), and the outcome after, from how it returned.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+import tenbri
+
+tenbri.init("audit/support", agent="agent:support-assistant")
+
+
+@tenbri.decision("reply_ticket", target="zendesk:ticket/{ticket}")
+def reply(ticket: int, text: str) -> None:
+    if not text:
+        raise tenbri.Refused("empty reply")  # outcome: refused
+
+
+reply(4821, "Your refund is on its way.")  # intent at seq 3, outcome ok at seq 4
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+import { Refused, decision, init } from 'tenbri'
+
+init({ stream: 'audit/support', agent: 'agent:support-assistant' })
+
+const reply = decision({ action: 'reply_ticket', target: 'zendesk:ticket/{ticket}' }, async ({ ticket, text }: { ticket: number; text: string }) => {
+  if (!text) throw new Refused('empty reply') // outcome: refused
+})
+
+await reply({ ticket: 4821, text: 'Your refund is on its way.' }) // intent at seq 3, outcome ok at seq 4
+```
+
+</TabItem>
+</Tabs>
+
+Any other exception is recorded as `error` and re-raised. See the
+[SDK reference](/docs/reference/sdk/#decision) for templates, `policy`, `inputs` and who acts.
+
 When no outcome arrives within the timeout (default 1 hour), the next writer session writes a
 `reconcile` entry for the intent with `status: unknown`. `tenbri append` does this before it
 appends. An outcome that arrives after a reconcile is still accepted and supersedes it. A verifier
@@ -301,6 +343,8 @@ It can also be filled in for you:
 - The Rust writer (`tenbri-writer` with the `otel` feature) puts the active OpenTelemetry span's
   ids on every entry appended without `trace`. It sends no telemetry itself: the OpenTelemetry API
   does nothing until your application installs an SDK and an exporter.
+- The Python SDK's `@tenbri.decision` takes it from the active OpenTelemetry span when
+  OpenTelemetry is installed.
 - The Claude Agent SDK and LangGraph adapters take it from the active OpenTelemetry span when
   OpenTelemetry is installed; the OpenAI Agents SDK adapter takes it from that SDK's own tracing
   ([Adapters](/docs/adapters/)).
