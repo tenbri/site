@@ -1,5 +1,5 @@
 ---
-// Tenbri's architecture as a stage-by-status matrix: four process chevrons across the top,
+// Tenbri's architecture as a stage-by-status matrix: four step headings across the top,
 // one row per status (available, optional, coming soon). A part's row is its status.
 interface Item { name: string; detail?: string; href?: string }
 interface Stage { title: string; who: string; available: Item[]; optional: Item[]; soon: string[] }
@@ -70,8 +70,7 @@ const rows = [
 	<div class="matrix" role="table" aria-label="Parts of Tenbri by stage and status">
 		<div class="corner" role="rowheader"></div>
 		{stages.map((s, i) => (
-			<div class="chev" role="columnheader" style={`--i:${i}`}>
-				<span class="n">{String(i + 1).padStart(2, '0')}</span>
+			<div class:list={['hd', { last: i === stages.length - 1 }]} role="columnheader">
 				<span class="t">{s.title}</span>
 				<span class="w">{s.who}</span>
 			</div>
@@ -99,7 +98,7 @@ const rows = [
 	<ol class="stack">
 		{stages.map((s, i) => (
 			<li>
-				<p class="sh"><span class="n">{String(i + 1).padStart(2, '0')}</span>{s.title}<span class="w">{s.who}</span></p>
+				<p class="sh">{s.title}<span class="w">{s.who}</span></p>
 				{rows.map((r) => {
 					const list = r.key === 'soon' ? s.soon.map((n) => ({ name: n }) as Item) : (s[r.key] as Item[]);
 					return list.length > 0 && (
@@ -139,23 +138,30 @@ const rows = [
 		grid-template-columns: 7.5rem repeat(4, minmax(0, 1fr));
 		border-bottom: 1px solid var(--a-line);
 	}
-	.corner { border-bottom: 2px solid var(--a-ink); }
-	.chev {
+	.corner { border-bottom: 1px solid var(--a-line); }
+	.hd {
 		position: relative;
-		display: grid; gap: 0.15rem; align-content: center;
-		min-height: 4.4rem;
-		padding: 0.7rem 1.6rem 0.7rem calc(1.2rem + 0.4rem * var(--i, 0) * 0);
-		margin-right: -0.7rem;
-		background: var(--a-ink);
-		color: var(--a-bg);
-		clip-path: polygon(0 0, calc(100% - 0.9rem) 0, 100% 50%, calc(100% - 0.9rem) 100%, 0 100%, 0.9rem 50%);
+		display: grid; gap: 0.2rem; align-content: end;
+		padding: 0.9rem 0.9rem 0.85rem;
+		border-top: 3px solid var(--stamp);
+		border-bottom: 1px solid var(--a-line);
 	}
-	.chev:nth-child(2) { clip-path: polygon(0 0, calc(100% - 0.9rem) 0, 100% 50%, calc(100% - 0.9rem) 100%, 0 100%); padding-left: 0.9rem; }
-	.chev:nth-child(n + 3) { padding-left: 1.6rem; }
-	.chev:nth-child(5) { margin-right: 0; }
-	.chev .n { font: 600 0.7rem/1 var(--font-mono); letter-spacing: 0.08em; color: var(--stamp); }
-	.chev .t { font: 750 1rem/1.15 var(--font-display); letter-spacing: -0.01em; }
-	.chev .w { font-size: 0.75rem; line-height: 1.3; opacity: 0.7; }
+	.hd + .hd { border-left: 1px solid var(--a-line); }
+	.hd:not(.last)::after {
+		content: '›';
+		position: absolute; z-index: 1;
+		right: -0.7rem; top: 50%;
+		translate: 0 -50%;
+		display: grid; place-items: center;
+		width: 1.4rem; height: 1.4rem;
+		border: 1px solid var(--a-line);
+		border-radius: 50%;
+		background: var(--a-bg);
+		color: var(--stamp);
+		font: 700 0.95rem/1 var(--font-body);
+	}
+	.hd .t { font: 750 1.02rem/1.2 var(--font-display); letter-spacing: -0.01em; color: var(--a-ink); }
+	.hd .w { font-size: 0.78rem; line-height: 1.3; color: var(--a-muted); }
 
 	.rl {
 		display: flex; align-items: flex-start; gap: 0.5rem;
@@ -196,9 +202,8 @@ const rows = [
 	/* Stacked list for narrow screens */
 	.stack { display: none; list-style: none; margin: 0; padding: 0; gap: 0.75rem; }
 	.stack > li { margin: 0; border: 1px solid var(--a-line); border-radius: 0.6rem; overflow: hidden; }
-	.sh { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.6rem; padding: 0.7rem 0.9rem; background: var(--a-ink); color: var(--a-bg); font: 750 1rem/1.2 var(--font-display); }
-	.sh .n { font: 600 0.7rem/1 var(--font-mono); color: var(--stamp); }
-	.sh .w { flex-basis: 100%; font: 400 0.75rem/1.3 var(--font-body); opacity: 0.7; }
+	.sh { margin: 0; display: grid; gap: 0.15rem; padding: 0.75rem 0.9rem; border-top: 3px solid var(--stamp); color: var(--a-ink); font: 750 1rem/1.2 var(--font-display); }
+	.sh .w { font: 400 0.78rem/1.3 var(--font-body); color: var(--a-muted); }
 	.sr { padding: 0.6rem 0.9rem 0.7rem; border-top: 1px solid var(--a-line); }
 	.sr.optional { background: color-mix(in srgb, var(--a-tint) 55%, transparent); }
 	.sr .rl { border: 0; padding: 0 0 0.35rem; }
