@@ -1,4 +1,5 @@
 ---
+import { createHash } from 'node:crypto';
 import { Image } from 'astro:assets';
 import mascot from '../assets/mascot.webp';
 import '../styles/tokens.css';
@@ -8,56 +9,185 @@ const description =
 	'Open-source, tamper-evident record of what AI agents decided: hash-chained, signed and verifiable offline, on storage you control.';
 
 const installs = [
-	{ id: 'cli', cmd: 'cargo install tenbri-cli --version 0.1.0-alpha.2' },
-	{ id: 'rust', cmd: 'cargo add tenbri@0.1.0-alpha.2' },
-	{ id: 'python', cmd: 'pip install --pre tenbri' },
-	{ id: 'node', cmd: 'npm install tenbri@next' },
+	{ id: 'crates.io', cmd: 'cargo install tenbri-cli --version 0.1.0-alpha.2' },
+	{ id: 'source', cmd: 'cargo install --git https://github.com/tenbri/tenbri tenbri-cli' },
 ];
 
-const compare = [
-	['Integrity', 'Editable, rotated, deleted', 'Hash-chained and signed. Any change fails verification.'],
-	['Who acted', 'A shared service account', 'The specific agent, person or service, with its own key'],
-	['What it saw', 'Free text, if anything', 'Inputs pinned by reference, version and content hash'],
-	['Why it was allowed', 'Rarely recorded', 'The rule or grant that allowed or refused it'],
-	['Human oversight', 'A Slack thread, if anything', 'The approval, as its own signed entry'],
-	['Sharing with an auditor', 'Access to your systems', 'A receipt that verifies on its own, offline'],
-	['Personal data', 'Copied into log lines', 'Only hashes in the chain; bodies encrypted and erasable'],
+// The demo chain. Simplified entries; hashes are real: SHA-256(0x00 || line), as in spec/format-v1.md.
+const leaf = (line: string) =>
+	'sha256:' + createHash('sha256').update(Buffer.concat([Buffer.from([0]), Buffer.from(line)])).digest('hex');
+const base = [
+	{ seq: 1, kind: 'approval', by: { kind: 'person', id: 'alice' }, action: { type: 'issue_refund', target: 'stripe:charge/ch_81f2' } },
+	{ seq: 2, kind: 'decision', phase: 'intent', principal: { kind: 'agent', id: 'support-assistant' }, action: { type: 'issue_refund', target: 'stripe:charge/ch_81f2' }, inputs: [{ ref: 'policy:refund', version: '14' }], ext: { refund: { amount: 4200 } } },
+	{ seq: 3, kind: 'decision', phase: 'outcome', principal: { kind: 'agent', id: 'support-assistant' }, action: { type: 'issue_refund' }, status: 'ok' },
+];
+let prev: string | null = null;
+const chain = base.map((e) => {
+	const entry = { ...e, prev };
+	const hash = leaf(JSON.stringify(entry));
+	prev = hash;
+	return { entry, hash };
+});
+const short = (h: string | null) => (h ? h.slice(0, 15) + '…' + h.slice(-4) : 'none (genesis)');
+
+const features = [
+	{
+		id: 'record',
+		tab: 'Record',
+		title: 'Intent before the action, outcome after.',
+		body: 'An agent writes what it is about to do and why, then what happened. Approvals are their own signed entries, and an intent names the approval it relies on by hash. An intent with no outcome after an hour gets a reconcile entry, so silence is visible too.',
+		points: ['Kinds: decision, approval, key, reconcile, note', 'Inputs pinned by ref, version and content digest', 'Links to entries in other streams: cause, handoff, approval', 'OpenTelemetry trace and span ids on every entry'],
+		code: `$ echo '{"kind":"decision","phase":"intent","source":"sdk",
+  "principal":{"kind":"agent","id":"support-assistant"},
+  "action":{"type":"reply_ticket","target":"zendesk:ticket/4821"},
+  "inputs":[{"ref":"policy:refund","version":"14", …}]}' \\
+  | tenbri append ./support
+
+$ echo '{"kind":"decision","phase":"outcome","source":"sdk",
+  "intent":"01M4XBH0Y60000000000000003","status":"ok", …}' \\
+  | tenbri append ./support`,
+		status: 'stable',
+	},
+	{
+		id: 'verify',
+		tab: 'Verify',
+		title: 'Anyone can check it, offline.',
+		body: 'Verification needs the stream and one fingerprint, nothing from your systems. It checks canonical bytes, the hash chain, every signature and every key. A checkpoint you saw before also catches truncation and forks.',
+		points: ['Ed25519 signatures over canonical JSON (RFC 8032, strict)', 'RFC 6962 leaf hashes; Merkle checkpoints as C2SP signed notes', 'Exit codes: 0 ok · 1 broken · 3 not pinned'],
+		code: `$ tenbri verify ./support --key sha256:9c1e…
+verified 1204 entries, stream tnb1:1702…b7d8, pinned to sha256:9c1e…
+
+# someone edits one byte of seq 3
+$ tenbri verify ./support --key sha256:9c1e…
+broken at seq 3: bad_signature
+2 entries verified before it, stream tnb1:1702…b7d8
+
+# someone deletes the tail
+$ tenbri verify ./support --key sha256:9c1e… --checkpoint cp.txt
+broken at seq 9: truncated`,
+		status: 'stable',
+	},
+	{
+		id: 'query',
+		tab: 'Query',
+		title: 'Find every decision made under the old rule.',
+		body: 'When a policy changes, list what was decided under the previous version and review it. Each result comes with its verification status, one JSON per line, ready for jq.',
+		points: ['Filter by input ref@version, repeatable', 'Filter by action type', 'Follow live with tail, like tail -f'],
+		code: `# everything decided under refund policy v14
+$ tenbri query ./support --input policy:refund@14
+
+# every ticket reply, with the contract it relied on
+$ tenbri query ./support --action reply_ticket \\
+    --input contract:acme-sante@3
+
+# watch decisions as agents write them
+$ tenbri tail ./support -n 20`,
+		status: 'stable',
+	},
+	{
+		id: 'schemas',
+		tab: 'Schemas',
+		title: 'Say what each action must record.',
+		body: 'Declare actions in tenbri.toml: which inputs they need, whether a rule and an approval are required, and typed fields. Check whole streams against it in CI.',
+		points: ['Unknown actions: reject or warn', 'Required inputs, rule, approval and durability', 'Typed extension fields'],
+		code: `# tenbri.toml
+unknown_actions = "reject"
+
+[actions.issue_refund]
+inputs = ["policy:refund"]
+rule = true
+approval = true
+durability = "replicated"
+target = "stripe:charge/*"
+
+[actions.issue_refund.fields."ext.refund.amount"]
+required = true
+type = "integer"
+
+$ tenbri schema check --schema tenbri.toml ./refunds
+./refunds seq 3: rule: required
+./refunds: 3 entries, 1 break their schema`,
+		status: 'stable',
+	},
+	{
+		id: 'keys',
+		tab: 'Keys',
+		title: 'A key per stream, a session key per run.',
+		body: 'Init makes a stream key and prints its fingerprint: pin it wherever you verify. Writers sign with short-lived session keys certified by the stream key. Rotation and revocation are entries in the chain, and revocation can reach back in time.',
+		points: ['Session keys last 24 hours by default', 'Rotate and revoke from Rust (Writer::rotate, revoke)', 'Secret keys in files or the macOS and Windows keychain'],
+		code: `$ tenbri init ./support --keychain
+created stream tnb1:1702…b7d8 at ./support
+stream key fingerprint (pin it): sha256:9c1e…
+keys: ~/.config/tenbri/keys
+verify with: tenbri verify ./support --key sha256:9c1e…`,
+		status: 'stable',
+	},
+	{
+		id: 'storage',
+		tab: 'Storage',
+		title: 'Plain files, in a bucket you own.',
+		body: 'A stream is a directory or an object-store prefix. Nothing is hosted, nothing phones home. Keep the keys apart from the stream, and give auditors read access to the bucket, not to your systems.',
+		points: ['Local disk, Cloudflare R2 and MinIO', 'AWS S3: tested on MinIO, real S3 before beta.1', 'Google Cloud Storage and Azure Blob next'],
+		code: `$ tenbri init ./support                        # local disk
+$ tenbri init s3://audit/agents/support        # AWS S3, MinIO
+$ tenbri init r2://audit/agents/support        # Cloudflare R2
+
+# MinIO
+export AWS_ENDPOINT_URL=http://localhost:9000 AWS_ALLOW_HTTP=true
+# R2
+export CLOUDFLARE_ACCOUNT_ID=… AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…`,
+		status: 'mixed',
+	},
+	{
+		id: 'api',
+		tab: 'API',
+		title: 'A daemon for every language: tenbrid.',
+		body: 'Run tenbrid next to your agents and write over REST or gRPC. Writes are idempotent, reads stream, and verification is one call. An OpenAPI file and the proto contract are in the repo.',
+		points: ['Bearer-token auth', 'Idempotency-Key on every write', 'Tail resumes from Last-Event-ID'],
+		code: `POST /v1/streams/{stream}/intents
+POST /v1/streams/{stream}/outcomes
+POST /v1/streams/{stream}/approvals
+POST /v1/streams/{stream}/entries
+GET  /v1/streams/{stream}/entries
+GET  /v1/streams/{stream}/entries/{id}
+GET  /v1/streams/{stream}/tail
+GET  /v1/streams/{stream}/verify
+
+service tenbri.v1.TenbriService {
+  AppendIntent · AppendOutcome · AppendApproval · AppendBatch
+  GetEntry · QueryEntries · TailEntries · VerifyStream
+}`,
+		status: 'stable',
+	},
+	{
+		id: 'rust',
+		tab: 'Rust',
+		title: 'Embed the writer.',
+		body: 'Use tenbri-writer, tenbri-keys and tenbri-store from Rust today. The tenbri facade crate and the Python, Node and WASM bindings are reserved names; their code lands before v0.1.0.',
+		points: ['Async writer over any store', 'verify() returns a report you can act on', 'Python, Node and WASM verifier next'],
+		code: `let sk = Key::new_stream()?;
+let session = Key::new_session(now_ms(), SESSION_LIFETIME_MS)?;
+let mut w = Writer::create(store.clone(), &sk, session).await?;
+
+let i = w.intent(decision("reply_ticket")).await?;
+// … the agent acts …
+w.outcome(&i, Status::Ok).await?;
+
+let report = verify(&store, Some(&sk.fingerprint())).await?;`,
+		status: 'stable',
+	},
 ];
 
-const cases = [
-	{
-		q: 'A customer disputes a refusal.',
-		a: 'Show the exact policy version, contract clause and grant behind every reply.',
-		cmd: 'tenbri query ./support --action reply_ticket',
-	},
-	{
-		q: 'A policy changes.',
-		a: 'List every decision made under the old wording, so someone can review them.',
-		cmd: 'tenbri query ./support --input policy:refund@14',
-	},
-	{
-		q: 'Someone edits history.',
-		a: 'Verification fails on the first changed byte, and a checkpoint catches truncation.',
-		cmd: 'tenbri verify ./support --key sha256:9c1e…',
-	},
-	{
-		q: 'An incident is unfolding.',
-		a: 'Follow decisions as they are written, each linked to the trace that produced it.',
-		cmd: 'tenbri tail ./support -n 20',
-	},
+const next = [
+	'Receipts an auditor verifies alone',
+	'Blob encryption and per-subject erasure',
+	'RFC 3161 timestamps',
+	'SQLite and Parquet index',
+	'Python, Node and WASM verifier',
+	'Claude Agent SDK, OpenAI Agents SDK, LangGraph adapters',
 ];
 
-const regs = [
-	['EU AI Act Art. 12', 'https://artificialintelligenceact.eu/article/12/'],
-	['EU AI Act Art. 14', 'https://artificialintelligenceact.eu/article/14/'],
-	['GDPR Art. 22', 'https://gdpr-info.eu/art-22-gdpr/'],
-	['DORA', 'https://eur-lex.europa.eu/eli/reg/2022/2554/oj'],
-	['NIS2', 'https://eur-lex.europa.eu/eli/dir/2022/2555/oj'],
-	['SOC 2', 'https://www.aicpa-cima.com/topic/audit-assurance/audit-and-assurance-greater-than-soc-2'],
-	['ISO/IEC 27001', 'https://www.iso.org/standard/27001'],
-	['ISO/IEC 42001', 'https://www.iso.org/standard/42001'],
-	['NIST AI RMF', 'https://www.nist.gov/itl/ai-risk-management-framework'],
-];
+const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', 'SOC 2', 'ISO/IEC 27001', 'ISO/IEC 42001', 'NIST AI RMF'];
 ---
 
 <!doctype html>
@@ -72,7 +202,6 @@ const regs = [
 		<link rel="icon" href="/favicon.png" />
 		<link rel="alternate" type="application/rss+xml" title="Tenbri blog" href="/blog/rss.xml" />
 		<script is:inline>
-			// Share the theme the docs remember (Starlight stores it under this key).
 			try {
 				const t = localStorage.getItem('starlight-theme');
 				if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
@@ -83,7 +212,7 @@ const regs = [
 		<header class="nav">
 			<div class="wrap nav-row">
 				<a class="brand" href="/">
-					<Image src={mascot} alt="" width={32} height={32} />
+					<Image src={mascot} alt="" width={28} height={28} />
 					<span>Tenbri</span>
 				</a>
 				<nav aria-label="Main">
@@ -98,22 +227,20 @@ const regs = [
 		<main>
 			<section class="hero wrap">
 				<div class="lockup">
-					<Image src={mascot} alt="" width={112} height={112} loading="eager" />
+					<Image src={mascot} alt="Tenbri's mascot, a pangolin detective" width={104} height={104} loading="eager" />
 					<span>Tenbri</span>
 				</div>
 				<h1>Proof of what your agents decided.</h1>
 				<p class="lede">
-					An open-source audit trail for AI agents. Every decision is hash-chained, signed and
-					verifiable offline: who acted, under which policy version, from which inputs, and who
-					approved. Plain files, on storage you control.
+					A tamper-evident audit trail for AI agents. Each decision is signed and chained to the one
+					before, so anyone can verify offline who acted, under which policy version, from which
+					inputs, and who approved.
 				</p>
 
 				<div class="install">
-					<div class="tabs" role="tablist" aria-label="Install with">
+					<div class="tabs" role="tablist" aria-label="Install from">
 						{installs.map((t, i) => (
-							<button type="button" role="tab" id={`tab-${t.id}`} aria-selected={i === 0 ? 'true' : 'false'} data-cmd={t.cmd}>
-								{t.id}
-							</button>
+							<button type="button" role="tab" class="itab" aria-selected={i === 0 ? 'true' : 'false'} data-cmd={t.cmd}>{t.id}</button>
 						))}
 						<button type="button" class="copy" id="copy">copy</button>
 					</div>
@@ -123,122 +250,134 @@ const regs = [
 				<div class="ctas">
 					<a class="btn primary" href="/docs/introduction/">Get started</a>
 					<a class="btn" href="https://github.com/tenbri/tenbri">Star on GitHub</a>
-					<a class="btn" href="https://github.com/tenbri/tenbri/tree/main/spec">Read the spec</a>
+					<a class="btn" href="https://github.com/tenbri/tenbri/blob/main/spec/format-v1.md">Read the spec</a>
+				</div>
+			</section>
+
+			<!-- Interactive: a three-entry chain the visitor can tamper with -->
+			<section class="wrap demo" aria-labelledby="demo-title">
+				<div class="demo-head">
+					<div>
+						<p class="eyebrow">Try it</p>
+						<h2 id="demo-title">Change one number. Watch the chain break.</h2>
+					</div>
+					<p class="demo-note">A refund an agent issued after Alice approved it. Edit the amount and see what verification says.</p>
 				</div>
 
-				<div class="desk" aria-label="Example Tenbri entry">
-					<div class="receipt ghost g2" aria-hidden="true"></div>
-					<div class="receipt ghost g1" aria-hidden="true"></div>
-					<article class="receipt">
-						<header class="r-head">
-							<span>Decision · intent</span>
-							<span>seq 3</span>
-						</header>
+				<div class="chain" id="chain" data-state="ok">
+					<script type="application/json" id="chain-data" set:html={JSON.stringify(chain.map((c) => c.entry))} />
+
+					<article class="entry">
+						<header><span>seq 1</span><span class="kind">approval</span></header>
+						<dl>
+							<dt>by</dt><dd>alice · person</dd>
+							<dt>action</dt><dd>issue_refund</dd>
+							<dt>target</dt><dd>stripe:charge/ch_81f2</dd>
+						</dl>
+						<footer>
+							<div><span>prev</span><code>{short(null)}</code></div>
+							<div><span>hash</span><code>{short(chain[0].hash)}</code></div>
+							<div class="sig ok"><span>sig</span><code>valid</code></div>
+						</footer>
+					</article>
+
+					<div class="link" aria-hidden="true"><i></i></div>
+
+					<article class="entry target">
+						<header><span>seq 2</span><span class="kind">decision · intent</span></header>
 						<dl>
 							<dt>agent</dt><dd>support-assistant</dd>
-							<dt>action</dt><dd>reply_ticket → zendesk:ticket/4821</dd>
-							<dt>inputs</dt><dd>policy:refund <b>@14</b><br />contract:acme-sante <b>@3</b></dd>
-							<dt>rule</dt><dd>grants:support-assistant @7 · <b class="allow">allow</b></dd>
-							<dt>trace</dt><dd>4bf92f35…0e4736</dd>
-							<dt>at</dt><dd>2026-10-14 14:02:13Z</dd>
+							<dt>action</dt><dd>issue_refund</dd>
+							<dt>inputs</dt><dd>policy:refund @14</dd>
+							<dt><label for="amount">amount</label></dt>
+							<dd class="amount"><input id="amount" type="number" inputmode="numeric" value="4200" min="0" step="100" aria-describedby="demo-hint" /><span>cents</span></dd>
 						</dl>
-						<footer class="r-foot">
-							<div><span>prev</span> sha256:3b75c4e7…f72f0</div>
-							<div><span>sig</span> ed25519:85a8f11d…8cd001</div>
+						<footer>
+							<div><span>prev</span><code>{short(chain[0].hash)}</code></div>
+							<div><span>hash</span><code id="hash-2">{short(chain[1].hash)}</code></div>
+							<div class="sig ok" id="sig-2"><span>sig</span><code>valid</code></div>
 						</footer>
-						<div class="stamp" aria-label="Verified">
-							<span class="stamp-top">tenbri</span>
-							<span class="stamp-main">Verified</span>
-							<span class="stamp-sub">chain · sig · key</span>
-						</div>
 					</article>
-					<Image class="pangolin" src={mascot} alt="Tenbri's mascot, a pangolin detective inspecting the entry with a magnifying glass" width={220} height={220} />
+
+					<div class="link" id="link-3" aria-hidden="true"><i></i></div>
+
+					<article class="entry">
+						<header><span>seq 3</span><span class="kind">decision · outcome</span></header>
+						<dl>
+							<dt>agent</dt><dd>support-assistant</dd>
+							<dt>intent</dt><dd>seq 2</dd>
+							<dt>status</dt><dd>ok</dd>
+						</dl>
+						<footer>
+							<div class="prev-3"><span>prev</span><code>{short(chain[1].hash)}</code></div>
+							<div><span>hash</span><code>{short(chain[2].hash)}</code></div>
+							<div class="sig ok"><span>sig</span><code>valid</code></div>
+						</footer>
+					</article>
+				</div>
+
+				<div class="demo-foot">
+					<pre class="term" aria-live="polite" id="verify-out"><span class="p">$</span> tenbri verify ./refunds --key sha256:9c1e…
+<span class="ok">verified 3 entries</span>, stream tnb1:1702…b7d8, pinned to sha256:9c1e…</pre>
+					<div class="demo-actions">
+						<button type="button" class="btn" id="tamper">Make it 42 000</button>
+						<button type="button" class="btn" id="restore" disabled>Restore</button>
+						<p id="demo-hint">Hashes are computed in your browser with SHA-256, as the spec does. Signatures are simulated.</p>
+					</div>
 				</div>
 			</section>
 
-			<section class="wrap block">
-				<div class="block-head">
-					<p class="eyebrow">Why not just logs?</p>
-					<h2>Logs tell operators what happened. Tenbri proves it to anyone.</h2>
-					<p class="sub">Including someone who doesn't trust the operator.</p>
+			<!-- Feature explorer -->
+			<section class="wrap explorer" aria-labelledby="features-title">
+				<div class="section-head">
+					<p class="eyebrow">What you get</p>
+					<h2 id="features-title">Everything an audit needs, in one small tool.</h2>
 				</div>
-				<div class="ledger-scroll">
-					<table class="ledger">
-						<thead>
-							<tr><th scope="col"><span class="sr">Property</span></th><th scope="col">Application logs</th><th scope="col">Tenbri</th></tr>
-						</thead>
-						<tbody>
-							{compare.map(([k, logs, tb]) => (
-								<tr><th scope="row">{k}</th><td class="logs">{logs}</td><td class="tb">{tb}</td></tr>
-							))}
-						</tbody>
-					</table>
-				</div>
-				<p class="note">Tenbri doesn't replace logs or tracing. It records decisions and links each one to the OpenTelemetry trace that produced it.</p>
-			</section>
 
-			<section class="wrap block">
-				<div class="block-head">
-					<p class="eyebrow">Three commands</p>
-					<h2>Write it, sign it, check it.</h2>
-				</div>
-				<div class="steps">
-					<ol>
-						<li><b>Create a stream.</b> A directory, or an <code>s3://</code> or <code>r2://</code> prefix. Tenbri prints the key fingerprint to pin.</li>
-						<li><b>Append decisions.</b> One JSON entry on stdin, from your agent, the SDK or <code>tenbrid</code>. Each entry links to the one before.</li>
-						<li><b>Verify anywhere.</b> Canonical bytes, chain, signatures and keys, checked offline against the fingerprint you pinned.</li>
-					</ol>
-					<pre class="term" aria-label="Terminal example"><span class="c"># 1  create a stream</span>
-<span class="p">$</span> tenbri init ./support
-created stream tnb1:1702…b7d8 at ./support
-stream key fingerprint (pin it): sha256:9c1e…
-
-<span class="c"># 2  append a decision</span>
-<span class="p">$</span> agent-run | tenbri append ./support
-{'{"seq":3,"kind":"decision","phase":"intent",…}'}
-
-<span class="c"># 3  verify it, anywhere</span>
-<span class="p">$</span> tenbri verify ./support --key sha256:9c1e…
-<span class="ok">verified 4 entries</span>, stream tnb1:1702…b7d8,
-pinned to sha256:9c1e…</pre>
-				</div>
-			</section>
-
-			<section class="wrap block">
-				<div class="block-head">
-					<p class="eyebrow">When it matters</p>
-					<h2>Answers for the day something goes wrong.</h2>
-				</div>
-				<div class="cases">
-					{cases.map((c) => (
-						<div class="case">
-							<h3>{c.q}</h3>
-							<p>{c.a}</p>
-							<code>{c.cmd}</code>
+				<div class="ex">
+					<div class="ex-tabs" role="tablist" aria-label="Features" aria-orientation="vertical">
+						{features.map((f, i) => (
+							<button type="button" role="tab" id={`ft-${f.id}`} aria-controls={`fp-${f.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>
+								{f.tab}
+							</button>
+						))}
+					</div>
+					{features.map((f, i) => (
+						<div class="ex-panel" role="tabpanel" id={`fp-${f.id}`} aria-labelledby={`ft-${f.id}`} hidden={i !== 0}>
+							<div class="ex-copy">
+								<span class={`status ${f.status}`}>{f.status === 'stable' ? 'Available in alpha' : 'Partly available'}</span>
+								<h3>{f.title}</h3>
+								<p>{f.body}</p>
+								<ul>{f.points.map((p) => <li>{p}</li>)}</ul>
+							</div>
+							<pre class="term code">{f.code}</pre>
 						</div>
 					))}
 				</div>
 			</section>
 
-			<section class="wrap block regs">
-				<p class="eyebrow">Records the rules ask for</p>
-				<ul>
-					{regs.map(([name, href]) => <li><a href={href}>{name}</a></li>)}
-				</ul>
-				<p class="note">Tenbri gives you the records these ask for. It does not make a system compliant on its own.</p>
+			<section class="wrap split">
+				<div>
+					<p class="eyebrow">Next on the way to v0.1.0</p>
+					<ul class="next">{next.map((n) => <li>{n}</li>)}</ul>
+					<a class="more" href="https://github.com/tenbri/tenbri#status">Full roadmap</a>
+				</div>
+				<div>
+					<p class="eyebrow">Records these frameworks ask for</p>
+					<ul class="chips">{regs.map((r) => <li>{r}</li>)}</ul>
+					<p class="fine">Tenbri gives you the records. It does not make a system compliant on its own.</p>
+				</div>
 			</section>
 
 			<section class="closing">
 				<div class="wrap closing-row">
-					<Image src={mascot} alt="" width={120} height={120} />
 					<div>
-						<p class="eyebrow">Pre-release · 0.1.0-alpha.2</p>
-						<h2>Early, open and built in public.</h2>
-						<p>The format is provisional until its external review ends. Follow along, read the spec, or tell us what your agents need to prove.</p>
-						<div class="ctas">
-							<a class="btn primary" href="https://github.com/tenbri/tenbri">Star on GitHub</a>
-							<a class="btn" href="/blog/">Read the blog</a>
-						</div>
+						<h2>Early, open, and built in public.</h2>
+						<p>0.1.0-alpha.2 is out. The format is provisional until its external review ends. Apache-2.0, written in Rust, no telemetry.</p>
+					</div>
+					<div class="ctas">
+						<a class="btn primary" href="https://github.com/tenbri/tenbri">Star on GitHub</a>
+						<a class="btn" href="/blog/">Read the blog</a>
 					</div>
 				</div>
 			</section>
@@ -258,12 +397,13 @@ pinned to sha256:9c1e…</pre>
 		</footer>
 
 		<script>
+			// Install tabs + copy
 			const cmd = document.getElementById('install-cmd')!;
 			const copy = document.getElementById('copy')!;
-			const tabs = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
-			for (const tab of tabs) {
+			const itabs = [...document.querySelectorAll<HTMLButtonElement>('.itab')];
+			for (const tab of itabs) {
 				tab.addEventListener('click', () => {
-					for (const t of tabs) t.setAttribute('aria-selected', String(t === tab));
+					for (const t of itabs) t.setAttribute('aria-selected', String(t === tab));
 					cmd.textContent = tab.dataset.cmd ?? '';
 				});
 			}
@@ -275,6 +415,67 @@ pinned to sha256:9c1e…</pre>
 					getSelection()?.selectAllChildren(cmd);
 				}
 				setTimeout(() => (copy.textContent = 'copy'), 1500);
+			});
+
+			// Feature explorer tabs (arrow keys move between tabs)
+			const ftabs = [...document.querySelectorAll<HTMLButtonElement>('.ex-tabs [role="tab"]')];
+			const select = (tab: HTMLButtonElement) => {
+				for (const t of ftabs) {
+					const on = t === tab;
+					t.setAttribute('aria-selected', String(on));
+					t.tabIndex = on ? 0 : -1;
+					document.getElementById(t.getAttribute('aria-controls')!)!.hidden = !on;
+				}
+			};
+			ftabs.forEach((tab, i) => {
+				tab.addEventListener('click', () => select(tab));
+				tab.addEventListener('keydown', (e) => {
+					const d = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 0;
+					if (!d) return;
+					e.preventDefault();
+					const next = ftabs[(i + d + ftabs.length) % ftabs.length];
+					select(next);
+					next.focus();
+				});
+			});
+
+			// Tamper demo
+			const entries = JSON.parse(document.getElementById('chain-data')!.textContent!);
+			const original = entries[1].ext.refund.amount as number;
+			const chainEl = document.getElementById('chain')!;
+			const amount = document.getElementById('amount') as HTMLInputElement;
+			const out = document.getElementById('verify-out')!;
+			const restore = document.getElementById('restore') as HTMLButtonElement;
+			const short = (h: string) => h.slice(0, 15) + '…' + h.slice(-4);
+			const leaf = async (line: string) => {
+				const bytes = new Uint8Array([0, ...new TextEncoder().encode(line)]);
+				const d = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+				return 'sha256:' + [...d].map((b) => b.toString(16).padStart(2, '0')).join('');
+			};
+			const head = '<span class="p">$</span> tenbri verify ./refunds --key sha256:9c1e…\n';
+			const render = async () => {
+				const value = Number(amount.value);
+				const e = structuredClone(entries[1]);
+				e.ext.refund.amount = value;
+				document.getElementById('hash-2')!.textContent = short(await leaf(JSON.stringify(e)));
+				const broken = value !== original;
+				chainEl.dataset.state = broken ? 'broken' : 'ok';
+				const sig = document.getElementById('sig-2')!;
+				sig.className = 'sig ' + (broken ? 'bad' : 'ok');
+				sig.querySelector('code')!.textContent = broken ? 'invalid' : 'valid';
+				restore.disabled = !broken;
+				out.innerHTML = broken
+					? head + '<span class="bad">broken at seq 2: bad_signature</span>\n1 entries verified before it, stream tnb1:1702…b7d8'
+					: head + '<span class="ok">verified 3 entries</span>, stream tnb1:1702…b7d8, pinned to sha256:9c1e…';
+			};
+			amount.addEventListener('input', render);
+			document.getElementById('tamper')!.addEventListener('click', () => {
+				amount.value = '42000';
+				render();
+			});
+			restore.addEventListener('click', () => {
+				amount.value = String(original);
+				render();
 			});
 		</script>
 	</body>
@@ -291,8 +492,7 @@ pinned to sha256:9c1e…</pre>
 	}
 	:global(main) { overflow-x: clip; }
 	:global(a) { color: inherit; }
-	:global(:focus-visible) { outline: 2px solid var(--lens); outline-offset: 3px; border-radius: 4px; }
-	.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+	:global(:focus-visible) { outline: 2px solid var(--stamp); outline-offset: 3px; border-radius: 4px; }
 
 	.wrap {
 		max-width: 70rem;
@@ -300,15 +500,13 @@ pinned to sha256:9c1e…</pre>
 		padding-left: max(20px, env(safe-area-inset-left, 0px));
 		padding-right: max(20px, env(safe-area-inset-right, 0px));
 	}
-
 	h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
-	h2 { font-size: clamp(1.8rem, 3.4vw, 2.6rem); line-height: 1.05; letter-spacing: -0.025em; font-weight: 750; }
-	h3 { font-size: 1.2rem; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em; }
-	p { margin: 0; }
+	h2 { font-size: clamp(1.75rem, 3.2vw, 2.5rem); line-height: 1.08; letter-spacing: -0.025em; font-weight: 750; }
+	h3 { font-size: 1.35rem; line-height: 1.2; font-weight: 700; letter-spacing: -0.015em; }
+	p, ul { margin: 0; }
 	code, pre { font-family: var(--font-mono); }
-
 	.eyebrow {
-		font: 500 0.78rem/1 var(--font-mono);
+		font: 500 0.75rem/1 var(--font-mono);
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: var(--stamp);
@@ -319,223 +517,199 @@ pinned to sha256:9c1e…</pre>
 		position: sticky;
 		top: env(safe-area-inset-top, 0px);
 		z-index: 10;
-		background: color-mix(in srgb, var(--paper) 88%, transparent);
+		background: color-mix(in srgb, var(--paper) 85%, transparent);
 		backdrop-filter: blur(10px);
 		border-bottom: 1px solid var(--rule);
 	}
 	.nav-row { display: flex; align-items: center; justify-content: space-between; height: 3.5rem; }
-	.brand { display: flex; align-items: center; gap: 0.5rem; text-decoration: none; font: 800 1.25rem/1 var(--font-display); letter-spacing: -0.03em; }
-	.brand :global(img) { width: 32px; height: 32px; }
+	.brand { display: flex; align-items: center; gap: 0.5rem; text-decoration: none; font: 800 1.2rem/1 var(--font-display); letter-spacing: -0.03em; }
+	.brand :global(img) { width: 28px; height: 28px; }
 	.nav nav { display: flex; gap: 1.5rem; font-weight: 500; font-size: 0.95rem; }
 	.nav nav a { text-decoration: none; color: var(--ink-2); }
 	.nav nav a:hover { color: var(--ink); }
 
-	/* Hero: centred lockup, tagline, install, then the product as the picture */
+	/* Hero */
 	.hero {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		text-align: center;
-		gap: 1.5rem;
-		padding-block: clamp(3rem, 7vw, 5.5rem) clamp(3rem, 6vw, 4.5rem);
+		display: flex; flex-direction: column; align-items: center; text-align: center;
+		gap: 1.4rem;
+		padding-block: clamp(3rem, 7vw, 5rem) clamp(2.5rem, 5vw, 3.5rem);
 	}
-	.lockup { display: flex; align-items: center; gap: clamp(0.5rem, 1.5vw, 1rem); }
-	.lockup :global(img) { width: clamp(72px, 10vw, 112px); height: auto; }
-	.lockup span {
-		font: 800 clamp(3.4rem, 9vw, 6.5rem)/0.9 var(--font-display);
-		letter-spacing: -0.05em;
-	}
-	.hero h1 {
-		font-size: clamp(1.6rem, 3.6vw, 2.6rem);
-		line-height: 1.1;
-		letter-spacing: -0.03em;
-		font-weight: 750;
-		color: var(--stamp);
-	}
-	.lede { color: var(--ink-2); font-size: 1.12rem; max-width: 38rem; }
+	.lockup { display: flex; align-items: center; gap: clamp(0.5rem, 1.5vw, 0.9rem); }
+	.lockup :global(img) { width: clamp(68px, 9vw, 104px); height: auto; }
+	.lockup span { font: 800 clamp(3.2rem, 8.5vw, 6rem)/0.9 var(--font-display); letter-spacing: -0.05em; }
+	.hero h1 { font-size: clamp(1.55rem, 3.4vw, 2.5rem); line-height: 1.1; letter-spacing: -0.03em; font-weight: 750; color: var(--stamp); }
+	.lede { color: var(--ink-2); font-size: 1.1rem; max-width: 37rem; }
 
 	.install {
-		width: min(100%, 34rem);
-		background: var(--term-bg);
-		color: var(--term-fg);
+		width: min(100%, 36rem);
+		background: var(--term-bg); color: var(--term-fg);
 		border-radius: 0.75rem;
 		text-align: left;
 		overflow: hidden;
-		margin-top: 0.5rem;
+		margin-top: 0.4rem;
 	}
 	.tabs { display: flex; align-items: center; gap: 0.25rem; padding: 0.5rem 0.5rem 0; }
 	.tabs button {
 		font: 500 0.75rem/1 var(--font-mono);
 		padding: 0.45rem 0.65rem;
-		border: 0;
-		border-radius: 0.4rem;
-		background: transparent;
-		color: var(--term-dim);
+		border: 0; border-radius: 0.4rem;
+		background: transparent; color: var(--term-dim);
 		cursor: pointer;
 	}
 	.tabs [aria-selected='true'] { background: var(--term-chip); color: var(--term-fg); }
 	.tabs .copy { margin-left: auto; border: 1px solid var(--term-chip); }
-	.install code {
-		display: block;
-		padding: 0.9rem 1rem 1rem;
-		font-size: 0.88rem;
-		white-space: nowrap;
-		overflow-x: auto;
-	}
+	.install code { display: block; padding: 0.9rem 1rem 1rem; font-size: 0.86rem; white-space: nowrap; overflow-x: auto; }
 	.install code::before { content: '$ '; color: var(--term-prompt); }
 
 	.ctas { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem; }
 	.btn {
 		display: inline-flex; align-items: center;
-		padding: 0.7rem 1.15rem;
+		padding: 0.65rem 1.1rem;
 		border-radius: 0.6rem;
 		border: 1px solid var(--rule);
 		background: var(--paper);
-		font-weight: 600; font-size: 0.95rem;
+		color: var(--ink);
+		font: 600 0.94rem/1.2 var(--font-body);
 		text-decoration: none;
-		transition: transform 0.15s ease, border-color 0.15s ease;
+		cursor: pointer;
+		transition: border-color 0.15s ease;
 	}
-	.btn:hover { transform: translateY(-1px); border-color: var(--ink-2); }
+	.btn:hover:not(:disabled) { border-color: var(--ink-2); }
+	.btn:disabled { opacity: 0.45; cursor: default; }
 	.btn.primary { background: var(--stamp); border-color: var(--stamp); color: #fff; }
 
-	/* The desk: a receipt, its chain behind it, and the pangolin checking it */
-	.desk { position: relative; width: min(100% - 1.75rem, 32rem); margin-top: 2.5rem; padding-bottom: 2rem; text-align: left; }
-	.receipt {
-		position: relative;
+	.section-head { display: grid; gap: 0.8rem; max-width: 42rem; }
+
+	/* Demo */
+	.demo { display: grid; gap: 1.75rem; padding-block: clamp(2.5rem, 6vw, 4rem); }
+	.demo-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 1rem 2rem; }
+	.demo-head > div { display: grid; gap: 0.8rem; max-width: 34rem; }
+	.demo-note { color: var(--ink-2); max-width: 26rem; font-size: 0.98rem; }
+
+	.chain {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 2.5rem minmax(0, 1fr) 2.5rem minmax(0, 1fr);
+		padding: clamp(1rem, 2.5vw, 1.75rem);
+		background: var(--paper-2);
+		border-radius: 1rem;
+	}
+	.entry {
 		background: var(--paper);
-		border: 1.5px solid var(--ink);
-		border-radius: 0.5rem;
-		padding: 1.25rem 1.4rem 1.1rem;
-		font: 400 0.82rem/1.5 var(--font-mono);
-		box-shadow: 6px 6px 0 var(--paper-2);
-		transform: rotate(-1.2deg);
+		border: 1px solid var(--rule);
+		border-radius: 0.7rem;
+		padding: 1rem 1.1rem 0.9rem;
+		font: 400 0.8rem/1.5 var(--font-mono);
+		display: grid; grid-template-rows: auto 1fr auto; gap: 0.75rem;
+		min-width: 0;
+		transition: border-color 0.2s ease, box-shadow 0.2s ease;
 	}
-	.receipt.ghost { position: absolute; inset: 0 0 2rem 0; background: var(--paper-2); box-shadow: none; border-color: var(--rule); }
-	.ghost.g1 { transform: translate(14px, -12px) rotate(1.5deg); }
-	.ghost.g2 { transform: translate(26px, -24px) rotate(3.5deg); opacity: 0.6; }
-	.r-head {
-		display: flex; justify-content: space-between;
-		text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem;
-		color: var(--ink-2);
-		padding-bottom: 0.7rem;
-		border-bottom: 1.5px dashed var(--rule);
-	}
-	.receipt dl { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: 0.35rem 0.75rem; margin: 0.9rem 0; }
-	.receipt dt { color: var(--ink-2); }
-	.receipt dd { margin: 0; overflow-wrap: anywhere; }
-	.receipt b { font-weight: 500; color: var(--stamp); }
-	.receipt b.allow { color: var(--lens); }
-	.r-foot { border-top: 1.5px dashed var(--rule); padding-top: 0.7rem; display: grid; gap: 0.2rem; color: var(--ink-2); font-size: 0.75rem; overflow-wrap: anywhere; }
-	.r-foot span { display: inline-block; width: 2.5rem; color: var(--ink); }
-
-	.stamp {
-		position: absolute;
-		right: -1.25rem;
-		top: 34%;
-		display: grid; justify-items: center;
-		padding: 0.45rem 1rem 0.5rem;
-		border: 3px solid var(--stamp);
-		outline: 1.5px solid var(--stamp);
-		outline-offset: 3px;
-		border-radius: 0.45rem;
-		background: color-mix(in srgb, var(--paper) 70%, transparent);
-		color: var(--stamp);
-		transform: rotate(-11deg);
-		animation: stamp 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) 0.5s backwards;
-	}
-	.stamp-top, .stamp-sub { font: 500 0.6rem/1.2 var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; }
-	.stamp-main { font: 800 1.7rem/1 var(--font-display); letter-spacing: 0.02em; text-transform: uppercase; }
-	@keyframes stamp {
-		from { transform: rotate(-11deg) scale(1.6); }
-		to { transform: rotate(-11deg) scale(1); }
-	}
-	.desk :global(.pangolin) {
-		position: absolute;
-		left: -9.5rem;
-		bottom: -0.5rem;
-		width: 170px;
-		height: auto;
-		transform: scaleX(-1) rotate(-4deg);
-	}
-
-	.block { padding-block: clamp(3.5rem, 8vw, 6rem); display: grid; gap: 2.25rem; border-top: 2px dashed var(--rule); }
-	.block-head { display: grid; gap: 0.9rem; max-width: 44rem; }
-	.block-head .sub { color: var(--ink-2); font-size: 1.1rem; }
-	.note { color: var(--ink-2); font-size: 0.95rem; max-width: 46rem; }
-
-	/* Ledger */
-	.ledger-scroll { overflow-x: auto; }
-	.ledger { width: 100%; min-width: 36rem; border-collapse: collapse; font-size: 0.98rem; }
-	.ledger th, .ledger td { text-align: left; padding: 0.9rem 1rem 0.9rem 0; vertical-align: top; border-bottom: 1px solid var(--rule); }
-	.ledger thead th { font: 500 0.75rem/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
-	.ledger thead th:last-child { color: var(--stamp); }
-	.ledger tbody th { font-weight: 600; width: 22%; }
-	.ledger .logs { color: var(--ink-2); width: 33%; }
-	.ledger .tb { font-weight: 500; }
-
-	/* Steps */
-	.steps { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 2.5rem; align-items: start; }
-	.steps ol { list-style: none; counter-reset: s; margin: 0; padding: 0; display: grid; gap: 1.6rem; }
-	.steps li { counter-increment: s; display: grid; grid-template-columns: 2.6rem minmax(0, 1fr); color: var(--ink-2); }
-	.steps li::before {
-		content: counter(s);
-		grid-row: span 2;
-		display: grid; place-items: center;
-		width: 2rem; height: 2rem;
-		border: 1.5px solid var(--stamp);
-		border-radius: 50%;
-		color: var(--stamp);
+	.entry.target { border-color: var(--stamp); box-shadow: 0 0 0 3px color-mix(in srgb, var(--stamp) 15%, transparent); }
+	.entry header { display: flex; justify-content: space-between; gap: 0.5rem; color: var(--ink-2); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; }
+	.entry .kind { color: var(--ink); }
+	.entry dl { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); gap: 0.3rem 0.6rem; margin: 0; align-content: start; }
+	.entry dt { color: var(--ink-2); }
+	.entry dd { margin: 0; overflow-wrap: anywhere; }
+	.amount { display: flex; align-items: center; gap: 0.4rem; }
+	.amount input {
+		width: 6.5rem;
 		font: 500 0.85rem/1 var(--font-mono);
+		padding: 0.3rem 0.45rem;
+		border: 1px solid var(--rule);
+		border-radius: 0.35rem;
+		background: var(--paper-2);
+		color: var(--stamp);
+		font-variant-numeric: tabular-nums;
 	}
-	.steps li b { color: var(--ink); display: block; font-weight: 600; }
-	.steps code { font-size: 0.88em; color: var(--ink); }
+	.amount span { color: var(--ink-2); font-size: 0.72rem; }
+	.entry footer { display: grid; gap: 0.15rem; padding-top: 0.6rem; border-top: 1px dashed var(--rule); font-size: 0.72rem; color: var(--ink-2); }
+	.entry footer span { display: inline-block; width: 2.6rem; color: var(--ink); }
+	.entry footer code { overflow-wrap: anywhere; }
+	.sig.ok code { color: var(--ok); }
+	.sig.bad code { color: var(--bad); font-weight: 500; }
+
+	.link { position: relative; display: grid; place-items: center; }
+	.link i { display: block; width: 100%; height: 2px; background: var(--ok); position: relative; }
+	.link i::after {
+		content: '';
+		position: absolute; right: -1px; top: -4px;
+		border: 5px solid transparent; border-left-color: var(--ok); border-right: 0;
+	}
+	.link::after {
+		content: '✓';
+		position: absolute; top: calc(50% - 1.6rem);
+		font: 600 0.8rem/1 var(--font-mono); color: var(--ok);
+	}
+	.chain[data-state='broken'] .entry.target { border-color: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 18%, transparent); }
+	.chain[data-state='broken'] #link-3 i { background: repeating-linear-gradient(90deg, var(--bad) 0 5px, transparent 5px 9px); }
+	.chain[data-state='broken'] #link-3 i::after { border-left-color: var(--bad); }
+	.chain[data-state='broken'] #link-3::after { content: '✗'; color: var(--bad); }
+	.chain[data-state='broken'] .prev-3 code { color: var(--bad); text-decoration: line-through; }
+
+	.demo-foot { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 1.25rem; align-items: start; }
+	.demo-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+	.demo-actions p { flex-basis: 100%; color: var(--ink-2); font-size: 0.85rem; }
+
 	.term {
 		margin: 0;
-		background: var(--term-bg);
-		color: var(--term-fg);
+		background: var(--term-bg); color: var(--term-fg);
 		border-radius: 0.75rem;
-		padding: 1.4rem 1.5rem;
-		font-size: 0.84rem;
-		line-height: 1.65;
+		padding: 1.1rem 1.25rem;
+		font-size: 0.82rem; line-height: 1.65;
 		overflow-x: auto;
 	}
-	.term .c { color: var(--term-dim); }
-	.term .p { color: var(--term-prompt); }
-	.term .ok { color: var(--term-ok); font-weight: 500; }
+	.term :global(.p) { color: var(--term-prompt); }
+	.term :global(.ok) { color: var(--term-ok); font-weight: 500; }
+	.term :global(.bad) { color: #ff8787; font-weight: 500; }
 
-	/* Cases */
-	.cases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
-	.case {
-		display: grid; gap: 0.6rem; align-content: start;
-		padding: 1.4rem 1.5rem;
-		background: var(--paper-2);
-		border-radius: 0.75rem;
+	/* Explorer */
+	.explorer { display: grid; gap: 2rem; padding-block: clamp(3rem, 7vw, 5rem); border-top: 1px solid var(--rule); }
+	.ex { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: 2rem; align-items: start; }
+	.ex-tabs { display: grid; gap: 0.15rem; position: sticky; top: calc(4.5rem + env(safe-area-inset-top, 0px)); }
+	.ex-tabs button {
+		text-align: left;
+		font: 500 0.98rem/1.2 var(--font-body);
+		padding: 0.6rem 0.8rem;
+		border: 0; border-radius: 0.5rem;
+		background: transparent; color: var(--ink-2);
+		cursor: pointer;
 	}
-	.case p { color: var(--ink-2); }
-	.case code { margin-top: 0.4rem; font-size: 0.8rem; color: var(--stamp); overflow-wrap: anywhere; }
-	.case code::before { content: '$ '; color: var(--ink-2); }
-
-	/* Regulations */
-	.regs { gap: 1.25rem; }
-	.regs ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
-	.regs a {
-		display: inline-block;
-		padding: 0.45rem 0.8rem;
-		border: 1px solid var(--rule);
+	.ex-tabs button:hover { color: var(--ink); background: var(--paper-2); }
+	.ex-tabs [aria-selected='true'] { color: var(--ink); background: var(--paper-2); box-shadow: inset 2px 0 0 var(--stamp); }
+	.ex-panel { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 1.75rem; align-items: start; min-width: 0; }
+	.ex-panel[hidden] { display: none; }
+	.ex-copy { display: grid; gap: 0.85rem; align-content: start; }
+	.ex-copy p { color: var(--ink-2); }
+	.ex-copy ul { padding-left: 1.1rem; display: grid; gap: 0.3rem; font-size: 0.95rem; }
+	.ex-copy li::marker { color: var(--stamp); }
+	.status {
+		justify-self: start;
+		font: 500 0.7rem/1 var(--font-mono);
+		letter-spacing: 0.06em; text-transform: uppercase;
+		padding: 0.35rem 0.55rem;
 		border-radius: 999px;
-		font: 500 0.82rem/1 var(--font-mono);
-		text-decoration: none;
-		color: var(--ink-2);
+		border: 1px solid currentColor;
 	}
-	.regs a:hover { color: var(--ink); border-color: var(--ink-2); }
+	.status.stable { color: var(--ok); }
+	.status.mixed { color: var(--amber); }
+	.term.code { white-space: pre; font-size: 0.8rem; }
+
+	/* Next + compliance */
+	.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3rem; padding-block: clamp(3rem, 6vw, 4rem); border-top: 1px solid var(--rule); }
+	.split > div { display: grid; gap: 1rem; align-content: start; }
+	.next { list-style: none; padding: 0; display: grid; gap: 0.5rem; }
+	.next li { display: flex; gap: 0.6rem; align-items: baseline; }
+	.next li::before { content: ''; flex: none; width: 0.6rem; height: 0.6rem; border: 1.5px solid var(--ink-2); border-radius: 50%; translate: 0 0.05rem; }
+	.more { font-weight: 600; color: var(--stamp); text-decoration: none; }
+	.more:hover { text-decoration: underline; }
+	.chips { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.45rem; }
+	.chips li { font: 500 0.8rem/1 var(--font-mono); padding: 0.45rem 0.7rem; border: 1px solid var(--rule); border-radius: 999px; color: var(--ink-2); }
+	.fine { color: var(--ink-2); font-size: 0.88rem; }
 
 	/* Closing */
 	.closing { background: var(--paper-2); }
-	.closing-row { display: flex; align-items: center; gap: 2.5rem; padding-block: clamp(3.5rem, 8vw, 5rem); }
-	.closing-row :global(img) { flex: none; width: 120px; height: auto; }
-	.closing-row > div { display: grid; gap: 1rem; max-width: 40rem; }
-	.closing-row p:not(.eyebrow) { color: var(--ink-2); }
-	.closing-row .ctas { justify-content: flex-start; }
+	.closing-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 1.5rem 3rem; padding-block: clamp(3rem, 6vw, 4rem); }
+	.closing-row > div:first-child { display: grid; gap: 0.75rem; max-width: 36rem; }
+	.closing-row p { color: var(--ink-2); }
 
 	.foot { border-top: 1px solid var(--rule); font-size: 0.9rem; color: var(--ink-2); }
 	.foot-row { display: flex; flex-wrap: wrap; gap: 1rem 2rem; justify-content: space-between; padding-block: 1.75rem calc(1.75rem + env(safe-area-inset-bottom, 0px)); }
@@ -544,16 +718,24 @@ pinned to sha256:9c1e…</pre>
 	.foot a:hover { color: var(--ink); }
 
 	@media (max-width: 960px) {
-		.desk :global(.pangolin) { left: auto; right: -0.5rem; bottom: -2.5rem; width: 110px; transform: rotate(4deg); }
+		.ex { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+		.ex-tabs { position: static; display: flex; overflow-x: auto; gap: 0.25rem; padding-bottom: 0.25rem; }
+		.ex-tabs button { flex: none; }
+		.ex-tabs [aria-selected='true'] { box-shadow: inset 0 -2px 0 var(--stamp); }
+		.ex-panel { grid-template-columns: minmax(0, 1fr); }
+		.demo-foot { grid-template-columns: minmax(0, 1fr); }
 	}
 	@media (max-width: 760px) {
-		.steps, .cases { grid-template-columns: minmax(0, 1fr); }
-		.stamp { right: 0.25rem; top: 0.25rem; scale: 0.75; animation: none; }
-		.closing-row { flex-direction: column; align-items: flex-start; gap: 1.5rem; }
+		.chain { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 2.25rem auto 2.25rem auto; }
+		.link i { width: 2px; height: 100%; }
+		.link i::after { right: -4px; top: auto; bottom: -1px; border: 5px solid transparent; border-top-color: var(--ok); border-bottom: 0; }
+		.chain[data-state='broken'] #link-3 i { background: repeating-linear-gradient(180deg, var(--bad) 0 5px, transparent 5px 9px); }
+		.chain[data-state='broken'] #link-3 i::after { border-left-color: transparent; border-top-color: var(--bad); }
+		.link::after { top: auto; left: calc(50% + 0.6rem); }
+		.split { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
 		.nav .wide { display: none; }
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.stamp { animation: none; }
-		.btn { transition: none; }
+		.btn, .entry { transition: none; }
 	}
 </style>

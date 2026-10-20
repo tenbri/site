@@ -1,25 +1,27 @@
-/* Tenbri tokens. Layout concept: an evidence desk — signed receipts on paper, stamped in the
-   mascot's orange ink, with hashes set in mono. Shared by the landing page and Starlight. */
+/* Tenbri tokens. Layout concept: an evidence desk. Cool neutral paper, the mascot's orange as the one
+   accent (stamp ink), hashes set in mono. Shared by the landing page and Starlight. */
 @import '@fontsource-variable/bricolage-grotesque';
 @import '@fontsource-variable/instrument-sans';
 @import '@fontsource/ibm-plex-mono/400.css';
 @import '@fontsource/ibm-plex-mono/500.css';
 
 :root {
-	--paper: #fffcf7;
-	--paper-2: #fff1de;
-	--ink: #24170f;
-	--ink-2: #6b5444;
-	--rule: #ead9c3;
-	--stamp: #d94c14;
+	--paper: #ffffff;
+	--paper-2: #f5f6f8;
+	--ink: #14161a;
+	--ink-2: #5b616e;
+	--rule: #e3e5ea;
+	--stamp: #d9480f;
+	--ok: #1a7f4b;
+	--bad: #c92a2a;
 	--amber: #f4a321;
 	--lens: #1f7fb5;
 
 	/* Terminals stay dark in both themes. */
-	--term-bg: #1d140e;
-	--term-fg: #f3e4cf;
-	--term-dim: #9c856d;
-	--term-chip: #3a2c21;
+	--term-bg: #111318;
+	--term-fg: #e6e8ec;
+	--term-dim: #7d8492;
+	--term-chip: #2a2e36;
 	--term-prompt: #ff8a4f;
 	--term-ok: #7cc8f0;
 
@@ -30,24 +32,28 @@
 
 @media (prefers-color-scheme: dark) {
 	:root:not([data-theme='light']) {
-		--paper: #16100c;
-		--paper-2: #231a12;
-		--ink: #f7eada;
-		--ink-2: #bba48d;
-		--rule: #3a2c21;
+		--paper: #0d0f12;
+		--paper-2: #16191e;
+		--ink: #eceef2;
+		--ink-2: #9aa1ad;
+		--rule: #262a31;
 		--stamp: #ff7a3d;
+		--ok: #4cc38a;
+		--bad: #ff6b6b;
 		--amber: #f6b544;
 		--lens: #7cc8f0;
 		color-scheme: dark;
 	}
 }
 :root[data-theme='dark'] {
-	--paper: #16100c;
-	--paper-2: #231a12;
-	--ink: #f7eada;
-	--ink-2: #bba48d;
-	--rule: #3a2c21;
+	--paper: #0d0f12;
+	--paper-2: #16191e;
+	--ink: #eceef2;
+	--ink-2: #9aa1ad;
+	--rule: #262a31;
 	--stamp: #ff7a3d;
+	--ok: #4cc38a;
+	--bad: #ff6b6b;
 	--amber: #f6b544;
 	--lens: #7cc8f0;
 	color-scheme: dark;
