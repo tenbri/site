@@ -33,6 +33,9 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          # npm, not pnpm: pnpm 11 refuses wrangler's install scripts
+          packageManager: npm
+          wranglerVersion: '4.151.2'
           command: ${{ github.event_name == 'push' && 'deploy' || format('versions upload --preview-alias pr-{0}', github.event.number) }}
 
       - name: Comment preview URL

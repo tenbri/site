@@ -28,4 +28,4 @@ The `.excalidraw` in the name makes dark mode invert the drawing, like excalidra
 
 ## Deploy
 
-GitHub Actions (`.github/workflows/deploy.yml`) builds the site and deploys `dist/` to Cloudflare Workers static assets (`wrangler.jsonc`). Pushes to `main` go to production; each pull request gets a preview URL in a comment. Needs the `CLOUDFLARE_API_TOKEN` secret and the `CLOUDFLARE_ACCOUNT_ID` variable.
+GitHub Actions (`.github/workflows/deploy.yml`) builds the site and deploys `dist/` to Cloudflare Workers static assets (`wrangler.jsonc`), served at tenbri.com and www.tenbri.com. Pushes to `main` go to production; each pull request gets a preview URL in a comment. Needs the `CLOUDFLARE_API_TOKEN` secret and the `CLOUDFLARE_ACCOUNT_ID` variable.
