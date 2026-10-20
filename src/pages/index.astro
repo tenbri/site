@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { Image } from 'astro:assets';
 import mascot from '../assets/mascot.webp';
-import '../styles/tokens.css';
+import Site from '../layouts/Site.astro';
 
 const title = 'Tenbri — audit trail for AI agents';
 const description =
@@ -190,44 +190,11 @@ const next = [
 const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', 'SOC 2', 'ISO/IEC 27001', 'ISO/IEC 42001', 'NIST AI RMF'];
 ---
 
-<!doctype html>
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-		<title>{title}</title>
-		<meta name="description" content={description} />
-		<meta property="og:title" content={title} />
-		<meta property="og:description" content={description} />
-		<link rel="icon" href="/favicon.png" />
-		<link rel="alternate" type="application/rss+xml" title="Tenbri blog" href="/blog/rss.xml" />
-		<script is:inline>
-			try {
-				const t = localStorage.getItem('starlight-theme');
-				if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
-			} catch {}
-		</script>
-	</head>
-	<body>
-		<header class="nav">
-			<div class="wrap nav-row">
-				<a class="brand" href="/">
-					<Image src={mascot} alt="" width={28} height={28} />
-					<span>Tenbri</span>
-				</a>
-				<nav aria-label="Main">
-					<a href="/docs/introduction/">Docs</a>
-					<a href="/blog/">Blog</a>
-					<a class="wide" href="https://github.com/tenbri/tenbri/releases">Releases</a>
-					<a href="https://github.com/tenbri/tenbri">GitHub</a>
-				</nav>
-			</div>
-		</header>
-
+<Site title={title} description={description}>
 		<main>
 			<section class="hero wrap">
 				<div class="lockup">
-					<Image src={mascot} alt="Tenbri's mascot, a pangolin detective" width={104} height={104} loading="eager" />
+					<Image src={mascot} alt="Tenbri's mascot, a pangolin detective" width={104} height={104} densities={[1, 2, 3]} loading="eager" />
 					<span>Tenbri</span>
 				</div>
 				<h1>Proof of what your agents decided.</h1>
@@ -382,20 +349,6 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 				</div>
 			</section>
 		</main>
-
-		<footer class="foot">
-			<div class="wrap foot-row">
-				<span>Tenbri · Apache-2.0</span>
-				<nav aria-label="Footer">
-					<a href="/docs/introduction/">Docs</a>
-					<a href="/blog/">Blog</a>
-					<a href="/blog/rss.xml">RSS</a>
-					<a href="https://github.com/tenbri/tenbri/tree/main/spec">Spec</a>
-					<a href="https://github.com/tenbri/tenbri/blob/main/SECURITY.md">Security</a>
-				</nav>
-			</div>
-		</footer>
-
 		<script>
 			// Install tabs + copy
 			const cmd = document.getElementById('install-cmd')!;
@@ -478,28 +431,9 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 				render();
 			});
 		</script>
-	</body>
-</html>
+</Site>
 
 <style>
-	:global(*, *::before, *::after) { box-sizing: border-box; }
-	:global(html) { -webkit-text-size-adjust: 100%; }
-	:global(body) {
-		margin: 0;
-		background: var(--paper);
-		color: var(--ink);
-		font: 400 1.0625rem/1.6 var(--font-body);
-	}
-	:global(main) { overflow-x: clip; }
-	:global(a) { color: inherit; }
-	:global(:focus-visible) { outline: 2px solid var(--stamp); outline-offset: 3px; border-radius: 4px; }
-
-	.wrap {
-		max-width: 70rem;
-		margin-inline: auto;
-		padding-left: max(20px, env(safe-area-inset-left, 0px));
-		padding-right: max(20px, env(safe-area-inset-right, 0px));
-	}
 	h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
 	h2 { font-size: clamp(1.75rem, 3.2vw, 2.5rem); line-height: 1.08; letter-spacing: -0.025em; font-weight: 750; }
 	h3 { font-size: 1.35rem; line-height: 1.2; font-weight: 700; letter-spacing: -0.015em; }
@@ -511,22 +445,6 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 		text-transform: uppercase;
 		color: var(--stamp);
 	}
-
-	/* Nav */
-	.nav {
-		position: sticky;
-		top: env(safe-area-inset-top, 0px);
-		z-index: 10;
-		background: color-mix(in srgb, var(--paper) 85%, transparent);
-		backdrop-filter: blur(10px);
-		border-bottom: 1px solid var(--rule);
-	}
-	.nav-row { display: flex; align-items: center; justify-content: space-between; height: 3.5rem; }
-	.brand { display: flex; align-items: center; gap: 0.5rem; text-decoration: none; font: 800 1.2rem/1 var(--font-display); letter-spacing: -0.03em; }
-	.brand :global(img) { width: 28px; height: 28px; }
-	.nav nav { display: flex; gap: 1.5rem; font-weight: 500; font-size: 0.95rem; }
-	.nav nav a { text-decoration: none; color: var(--ink-2); }
-	.nav nav a:hover { color: var(--ink); }
 
 	/* Hero */
 	.hero {
@@ -711,12 +629,6 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	.closing-row > div:first-child { display: grid; gap: 0.75rem; max-width: 36rem; }
 	.closing-row p { color: var(--ink-2); }
 
-	.foot { border-top: 1px solid var(--rule); font-size: 0.9rem; color: var(--ink-2); }
-	.foot-row { display: flex; flex-wrap: wrap; gap: 1rem 2rem; justify-content: space-between; padding-block: 1.75rem calc(1.75rem + env(safe-area-inset-bottom, 0px)); }
-	.foot nav { display: flex; flex-wrap: wrap; gap: 1.25rem; }
-	.foot a { text-decoration: none; }
-	.foot a:hover { color: var(--ink); }
-
 	@media (max-width: 960px) {
 		.ex { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
 		.ex-tabs { position: static; display: flex; overflow-x: auto; gap: 0.25rem; padding-bottom: 0.25rem; }
@@ -733,7 +645,6 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 		.chain[data-state='broken'] #link-3 i::after { border-left-color: transparent; border-top-color: var(--bad); }
 		.link::after { top: auto; left: calc(50% + 0.6rem); }
 		.split { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
-		.nav .wide { display: none; }
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.btn, .entry { transition: none; }

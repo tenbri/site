@@ -1,0 +1,142 @@
+---
+// Figures for the July 2026 Hugging Face incident post. Colours come from the site tokens.
+interface Props { n: 1 | 2 | 3 }
+const { n } = Astro.props;
+---
+
+<figure class="incident-fig">
+	<div class="plate">
+		{n === 1 && (
+			<svg viewBox="0 0 940 300" role="img" aria-labelledby="f1t">
+				<title id="f1t">Timeline comparing the actual incident response to one with a Tenbri record</title>
+				<text x="20" y="34" class="lbl t-ink">As it happened</text>
+				<line x1="20" y1="80" x2="920" y2="80" class="s-rule" stroke-width="2" />
+				<circle cx="80" cy="80" r="8" class="t-seal" />
+				<text x="80" y="108" text-anchor="middle" class="t-ink">Agents escape</text>
+				<text x="80" y="124" text-anchor="middle" class="t-soft">sandbox</text>
+				<rect x="300" y="68" width="300" height="24" rx="3" class="t-wash" />
+				<circle cx="300" cy="80" r="8" class="t-ink" />
+				<text x="300" y="108" text-anchor="middle" class="t-ink">Jul 16</text>
+				<text x="300" y="124" text-anchor="middle" class="t-soft">HF: "automated attack"</text>
+				<text x="450" y="85" text-anchor="middle" class="t-soft">5 days: who is this?</text>
+				<circle cx="600" cy="80" r="8" class="t-ink" />
+				<text x="600" y="108" text-anchor="middle" class="t-ink">Jul 21</text>
+				<text x="600" y="124" text-anchor="middle" class="t-soft">OpenAI: "it was us"</text>
+				<circle cx="860" cy="80" r="8" class="t-ink" />
+				<text x="860" y="108" text-anchor="middle" class="t-ink">Aug 26</text>
+				<text x="860" y="124" text-anchor="middle" class="t-soft">technical report</text>
+
+				<line x1="20" y1="166" x2="920" y2="166" class="s-rule" stroke-width="1" stroke-dasharray="3 5" />
+				<text x="20" y="200" class="lbl t-ok">With a Tenbri record</text>
+				<line x1="20" y1="246" x2="920" y2="246" class="s-rule" stroke-width="2" />
+				<circle cx="80" cy="246" r="8" class="t-seal" />
+				<text x="80" y="274" text-anchor="middle" class="t-ink">Agents escape</text>
+				<rect x="300" y="234" width="90" height="24" rx="3" class="t-wash" />
+				<circle cx="300" cy="246" r="8" class="t-ink" />
+				<text x="300" y="274" text-anchor="middle" class="t-ink">Jul 16</text>
+				<text x="300" y="290" text-anchor="middle" class="t-soft">HF shares IPs, timing</text>
+				<circle cx="390" cy="246" r="8" class="t-ok" />
+				<text x="470" y="236" class="t-ok">match in hours:</text>
+				<text x="470" y="252" class="t-ok">intent entries name the</text>
+				<text x="470" y="268" class="t-ok">target host, agent key, run</text>
+			</svg>
+		)}
+		{n === 2 && (
+			<svg viewBox="0 0 940 330" role="img" aria-labelledby="f2t">
+				<title id="f2t">A hash-chained agent stream where one entry has been altered and verification fails</title>
+				<text x="20" y="30" class="lbl t-ink">stream tnb1:… · run exploitgym-eval · session sess:0412</text>
+				<rect x="20" y="60" width="200" height="150" rx="5" class="t-sheet s-ink" stroke-width="1.5" />
+				<text x="34" y="84" class="t-soft">seq 1041 · intent</text>
+				<text x="34" y="108" class="t-ink">scan egress paths</text>
+				<text x="34" y="128" class="t-soft">input policy:eval@3</text>
+				<text x="34" y="148" class="t-soft">input task.json</text>
+				<text x="34" y="190" class="t-ok">sig ✓  prev 9c1e…</text>
+				<path d="M220 135 H260" class="s-ink" stroke-width="2" fill="none" />
+				<polygon points="260,129 270,135 260,141" class="t-ink" />
+				<rect x="270" y="60" width="200" height="150" rx="5" class="t-sheet s-ink" stroke-width="1.5" />
+				<text x="284" y="84" class="t-soft">seq 1042 · outcome</text>
+				<text x="284" y="108" class="t-ink">proxy reachable</text>
+				<text x="284" y="128" class="t-soft">intent: seq 1041</text>
+				<text x="284" y="148" class="t-soft">otel trace 7f3a…</text>
+				<text x="284" y="190" class="t-ok">sig ✓  prev 41d0…</text>
+				<path d="M470 135 H510" class="s-ink" stroke-width="2" fill="none" />
+				<polygon points="510,129 520,135 510,141" class="t-ink" />
+				<rect x="520" y="60" width="200" height="150" rx="5" class="t-sheet s-seal" stroke-width="2.5" />
+				<text x="534" y="84" class="t-soft">seq 1043 · intent</text>
+				<text x="534" y="108" class="t-ink"><tspan class="t-seal">[edited]</tspan> idle</text>
+				<text x="534" y="128" class="t-soft">was: auth to hf host</text>
+				<text x="534" y="148" class="t-soft">input policy:eval@3</text>
+				<text x="534" y="190" class="t-seal">sig ✗  bad_signature</text>
+				<path d="M720 135 H760" class="s-seal" stroke-width="2" fill="none" stroke-dasharray="5 4" />
+				<polygon points="760,129 770,135 760,141" class="t-seal" />
+				<rect x="770" y="60" width="150" height="150" rx="5" class="t-sheet s-ink" stroke-width="1.5" />
+				<text x="784" y="84" class="t-soft">seq 1044 · outcome</text>
+				<text x="784" y="108" class="t-ink">token obtained</text>
+				<text x="784" y="190" class="t-seal">prev ≠ hash(1043)</text>
+				<rect x="20" y="240" width="900" height="66" rx="5" class="t-wash" />
+				<text x="40" y="268" class="t-ink">Change one byte of seq 1043: its signature no longer verifies, and seq 1044 still points</text>
+				<text x="40" y="288" class="t-ink">at the old hash. The edit is visible to anyone holding the stream's pinned fingerprint.</text>
+			</svg>
+		)}
+		{n === 3 && (
+			<svg viewBox="0 0 940 330" role="img" aria-labelledby="f3t">
+				<title id="f3t">Where the Tenbri writer must sit: outside the sandbox, with checkpoints sent to an outside witness</title>
+				<rect x="20" y="40" width="330" height="250" rx="8" class="t-wash s-seal" stroke-width="2" stroke-dasharray="7 5" />
+				<text x="38" y="68" class="lbl t-seal">Eval sandbox (breached)</text>
+				<circle cx="90" cy="130" r="22" class="t-sheet s-ink" stroke-width="1.5" /><text x="90" y="134" text-anchor="middle" class="t-ink">A1</text>
+				<circle cx="160" cy="130" r="22" class="t-sheet s-ink" stroke-width="1.5" /><text x="160" y="134" text-anchor="middle" class="t-ink">A2</text>
+				<circle cx="230" cy="130" r="22" class="t-sheet s-ink" stroke-width="1.5" /><text x="230" y="134" text-anchor="middle" class="t-ink">A3</text>
+				<text x="282" y="134" class="t-soft">…1,200</text>
+				<line x1="185" y1="152" x2="185" y2="200" class="s-seal" stroke-width="1.5" stroke-dasharray="4 4" />
+				<rect x="60" y="200" width="250" height="56" rx="5" class="t-sheet s-seal" stroke-width="1.5" />
+				<text x="185" y="224" text-anchor="middle" class="t-seal">writer inside the sandbox</text>
+				<text x="185" y="244" text-anchor="middle" class="t-soft">agents can stop or kill it</text>
+				<path d="M350 130 H470" class="s-ink" stroke-width="2" fill="none" />
+				<polygon points="470,124 480,130 470,136" class="t-ink" />
+				<text x="362" y="118" class="t-soft">signed entries</text>
+				<text x="362" y="152" class="t-soft">one-way, append</text>
+				<rect x="480" y="80" width="200" height="100" rx="8" class="t-sheet s-ok" stroke-width="2" />
+				<text x="580" y="112" text-anchor="middle" class="lbl t-ok">tenbrid</text>
+				<text x="580" y="136" text-anchor="middle" class="t-ink">separate host and keys</text>
+				<text x="580" y="156" text-anchor="middle" class="t-soft">flags silent streams*</text>
+				<path d="M680 130 H770" class="s-ink" stroke-width="2" fill="none" />
+				<polygon points="770,124 780,130 770,136" class="t-ink" />
+				<text x="690" y="118" class="t-soft">checkpoints</text>
+				<rect x="780" y="80" width="140" height="100" rx="8" class="t-sheet s-ink" stroke-width="1.5" />
+				<text x="850" y="112" text-anchor="middle" class="lbl t-ink">Witness</text>
+				<text x="850" y="136" text-anchor="middle" class="t-soft">auditor or</text>
+				<text x="850" y="154" text-anchor="middle" class="t-soft">third party</text>
+				<rect x="480" y="220" width="440" height="70" rx="5" class="t-wash" />
+				<text x="500" y="248" class="t-ink">If an agent's stream goes quiet while its run is</text>
+				<text x="500" y="268" class="t-ink">still active, that silence is itself an alert.</text>
+			</svg>
+		)}
+	</div>
+	<figcaption><slot /></figcaption>
+</figure>
+
+<style>
+	.incident-fig {
+		--f-ink: var(--ink);
+		--f-soft: var(--ink-2);
+		--f-rule: var(--rule);
+		--f-sheet: var(--paper);
+		--f-wash: var(--paper-2);
+		--f-seal: var(--bad);
+		--f-ok: var(--ok);
+		width: min(60rem, 100vw - 40px);
+		margin: 2.5rem 0 2.5rem 50%;
+		translate: -50% 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+	}
+	.plate { border: 1px solid var(--f-rule); border-radius: 0.6rem; padding: clamp(0.75rem, 2.5vw, 1.25rem); overflow-x: auto; }
+	svg { display: block; width: 100%; height: auto; min-width: 640px; }
+	svg text { font-family: var(--font-mono); font-size: 12px; }
+	svg .lbl { font-family: var(--font-display); font-weight: 700; font-size: 15px; }
+	figcaption { font-family: var(--font-mono); font-size: 0.78rem; line-height: 1.5; color: var(--f-soft); }
+	.t-ink { fill: var(--f-ink); } .t-soft { fill: var(--f-soft); } .t-seal { fill: var(--f-seal); } .t-ok { fill: var(--f-ok); }
+	.t-sheet { fill: var(--f-sheet); } .t-wash { fill: var(--f-wash); }
+	.s-ink { stroke: var(--f-ink); } .s-rule { stroke: var(--f-rule); } .s-seal { stroke: var(--f-seal); } .s-ok { stroke: var(--f-ok); }
+</style>

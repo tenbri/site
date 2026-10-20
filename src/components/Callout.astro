@@ -1,0 +1,26 @@
+---
+interface Props { title: string }
+---
+<aside class="callout">
+	<p class="callout-title">{Astro.props.title}</p>
+	<div><slot /></div>
+</aside>
+
+<style>
+	.callout {
+		margin: 2rem 0;
+		padding: 1rem 1.25rem;
+		border-radius: 0.75rem;
+		background: var(--paper-2);
+		border: 1px solid var(--rule);
+		font-size: 0.98rem;
+	}
+	.callout-title {
+		margin: 0 0 0.35rem;
+		font: 500 0.72rem/1 var(--font-mono);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--stamp);
+	}
+	.callout :global(p) { margin: 0; }
+</style>

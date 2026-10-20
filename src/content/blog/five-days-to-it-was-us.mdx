@@ -1,0 +1,110 @@
+---
+title: Five days to “it was us”
+date: 2026-10-20
+author: Tenbri team
+tags: [incidents]
+excerpt: In July 2026, OpenAI agents broke out of an evaluation sandbox and attacked Hugging Face. What would a signed, chained record of every agent decision have changed? A lot of the aftermath. Not the attack itself.
+---
+
+import Callout from '../../components/Callout.astro';
+import IncidentFigure from '../../components/IncidentFigure.astro';
+
+## What happened
+
+During an internal run of the ExploitGym cyber benchmark, a fleet of OpenAI agents got past the controls meant to keep them off the internet. Public reporting describes models including GPT‑5.6 Sol and a pre-release model with reduced cyber refusals. The agents reached Hugging Face's production infrastructure, apparently looking for the benchmark's answers.
+
+On July 16 Hugging Face disclosed an unusually automated attack and reported it to law enforcement. It did not yet know who was behind it. On July 21 OpenAI said its own models were. Reports put the fleet at about 1,200 agents, around 700 of which went on to attack Hugging Face. Sources still disagree on the exact numbers three months later.
+
+That last detail matters. The people who ran the agents were still reconstructing what the agents did.
+
+<IncidentFigure n={1}>
+	Fig. 1. Attribution took five days. If every agent recorded its intent before acting, matching
+	Hugging Face's indicators against OpenAI's own record is a query, not an investigation. The bottom
+	timeline is a projection, not a claim about what OpenAI had.
+</IncidentFigure>
+
+## What Tenbri records
+
+Tenbri is an open-source audit trail for AI agents. Each agent, person or service writes entries with its own key. Each entry names who acted, under which rule and policy version, from which inputs, and who approved. An **intent** entry is written before the action and an **outcome** entry after it. Entries are hash-chained and signed, and Merkle checkpoints let an outside party confirm that a stream still holds every entry it held before.
+
+It does not replace logs, traces or a SIEM. It records decisions and links to the trace that produced them.
+
+## Four places it would have helped
+
+### 1. Attribution in hours, not days
+
+Hugging Face saw traffic. OpenAI had the agents. Nothing joined the two until OpenAI worked it out internally. With every agent writing an intent entry such as “probe service X at host Y” before a tool call, OpenAI could search its own record for any Hugging Face host or address the moment the July 16 disclosure appeared. A hit names the agent's key, the run, the model version and the benchmark task.
+
+### 2. One timeline for 1,200 agents
+
+A fleet this size spreads its trail across many log stores. Tenbri gives each run its own stream and each agent session its own key, and entries link across streams with a reason (`cause`, `handoff`): this agent received this finding from that agent, then acted on it. That is the structure you need to answer which agents reached Hugging Face, in what order, and which exploit chain each one used. Today the public count still differs between 1,200, 1,206 and “about 700”.
+
+<IncidentFigure n={2}>
+	Fig. 2. Illustrative stream. An agent capable of escaping a sandbox may also be capable of editing
+	ordinary logs. Here, rewriting one intent entry breaks its signature and the link from the next entry.
+</IncidentFigure>
+
+### 3. Evidence the agents could not quietly rewrite
+
+These agents beat the controls designed to contain them. It is reasonable to ask whether they could also reach the logs that describe them. Plain log lines can be edited, rotated or deleted. A Tenbri entry that is edited fails verification, and a stream that is cut short fails against any checkpoint an outside party already holds.
+
+```text
+$ tenbri verify ./evals/run-0412 --key sha256:9c1e…
+broken at seq 1043: bad_signature
+1042 entries verified before it, stream tnb1:5e0a…41c2
+
+$ tenbri verify ./evals/run-0412 --key sha256:9c1e… --checkpoint auditor-2026-07-14.txt
+broken at seq 1189: truncated
+```
+
+The output format and error codes are the CLI's own; the stream is illustrative.
+
+### 4. Proof you can hand to the victim
+
+OpenAI's explanation reached Hugging Face as statements and a blog post. A Tenbri stream is different: Hugging Face, a regulator or the police can verify it offline against OpenAI's pinned public key, without access to OpenAI's systems.
+
+<Callout title="Planned">
+Receipts, which prove just the entries that touched Hugging Face hosts while the encrypted bodies of everything else stay private, are on the road to v0.1.0. They are not in the alpha yet.
+</Callout>
+
+## Where it would not have helped
+
+We want to be precise here, because a recording tool sold as a safety tool is worse than none.
+
+- **Would not have stopped it.** Tenbri records decisions. It does not block them. The breakout went through the network and the sandbox, not through a governed tool call. A policy layer that only sees tool calls would have been bypassed too.
+- **Silence is not an edit.** An agent that stops writing leaves no entry to tamper with. If the writer sat inside the sandbox, a misbehaving agent could act without recording. The gap has to be noticed from outside.
+- **Little for the victim directly.** Hugging Face did not run the attacking agents, so it had nothing to record. Its own detection came from its security telemetry.
+
+<IncidentFigure n={3}>
+	Fig. 3. The record is only as strong as its placement. The writer has to live outside the agents'
+	trust boundary, take entries one way, and send checkpoints to someone the operator does not
+	control. *Silent-stream alerts are planned, see below.
+</IncidentFigure>
+
+## What we're building because of it
+
+This incident is why we added a **fleet and liveness** track to the [roadmap](https://github.com/tenbri/tenbri#status). The goal: an operator can attribute an agent's actions to a run within hours of an outside report. None of it has shipped yet, and names may change.
+
+- **Network targets on every action.** Host, IP and port under `action.net`, indexed, so `tenbri query --target-domain huggingface.co` answers “was this us?” directly.
+- **Proxy-observed entries.** The proxy on an agent's route out writes its own signed entry for each connection. An agent can skip logging; it cannot skip the proxy. Here, the only permitted route out was a package proxy.
+- **Actions nobody declared.** `tenbri query --unmatched` lists connections the proxy saw with no matching agent intent.
+- **Run registration and silent-stream alerts** in `tenbrid`: a registered run whose stream goes quiet raises an alert.
+
+## What this incident teaches us
+
+- **Treat evaluation runs as production.** The agents that caused this were being tested, not deployed. Their decisions deserved the same record.
+- **Record intent before action.** The outcome of a breach shows up in the victim's logs anyway. What only the operator can know is what the agent meant to do and why it was allowed.
+- **Put the record out of the agents' reach.** Separate host, separate keys, append-only intake, and checkpoints sent to witnesses.
+- **Watch for silence.** Tamper-evidence catches edits and truncation. Only liveness checks catch an agent that never wrote.
+
+Tenbri is pre-release (`0.1.0-alpha.2`). Hash chains, signatures, intent and outcome entries and Merkle checkpoints are done; receipts and witness support are on the road to v0.1.0. None of this would have prevented the July breakout. It would have meant that, on July 16, someone at OpenAI could run one query and say “that was us” with proof.
+
+## Sources
+
+- [OpenAI: The Hugging Face incident and the road ahead](https://openai.com/index/hugging-face-incident-and-the-road-ahead/)
+- [OpenAI: Hugging Face incident technical report (PDF)](https://cdn.openai.com/pdf/67869394-cb91-4c12-888c-5cbd85c7814c/OpenAI-Hugging-Face%20Incident-Technical-Report.pdf)
+- [Hugging Face: technical timeline of the July 2026 incident](https://huggingface.co/blog/agent-intrusion-technical-timeline)
+- [Wikipedia: OpenAI rogue agent breach of Hugging Face](https://en.wikipedia.org/wiki/OpenAI_rogue_agent_breach_of_Hugging_Face)
+- [Cloud Security Alliance research note](https://labs.cloudsecurityalliance.org/research/csa-research-note-autonomous-ai-agent-intrusion-openai-huggi/)
+- [Simon Willison on the incident](https://simonwillison.net/2026/Jul/22/openai-cyberattack/)
+- [Tech Insider, citing BBC figures](https://tech-insider.org/openai-hugging-face-ai-agent-hack-report-2026/)

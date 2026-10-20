@@ -1,0 +1,62 @@
+---
+import { getCollection } from 'astro:content';
+import Site from '../../layouts/Site.astro';
+
+const posts = (await getCollection('blog')).sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+const fmt = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+const minutes = (body = '') => Math.max(1, Math.round(body.split(/\s+/).length / 230));
+---
+
+<Site title="Blog · Tenbri" description="Notes on building an audit trail for AI agents, and on the incidents that shape it.">
+	<main class="wrap blog">
+		<header class="head">
+			<h1>Blog</h1>
+			<p>Notes on building an audit trail for AI agents, and on the incidents that shape it.</p>
+			<a class="rss" href="/blog/rss.xml">RSS feed</a>
+		</header>
+
+		<ol class="posts">
+			{posts.map((p, i) => (
+				<li class:list={['post', { featured: i === 0 }]}>
+					<a href={`/blog/${p.id}/`}>
+						<div class="meta">
+							<time datetime={p.data.date.toISOString()}>{fmt(p.data.date)}</time>
+							<span>{minutes(p.body)} min read</span>
+							{p.data.tags.map((t) => <span class="tag">{t}</span>)}
+						</div>
+						<h2>{p.data.title}</h2>
+						<p>{p.data.excerpt}</p>
+						<span class="more">Read the post →</span>
+					</a>
+				</li>
+			))}
+		</ol>
+	</main>
+</Site>
+
+<style>
+	.blog { padding-block: clamp(3rem, 7vw, 5rem) clamp(4rem, 8vw, 6rem); display: grid; gap: 3rem; }
+	.head { display: grid; gap: 0.75rem; max-width: 40rem; }
+	h1 { margin: 0; font: 800 clamp(2.6rem, 6vw, 4rem)/1 var(--font-display); letter-spacing: -0.04em; }
+	.head p { margin: 0; color: var(--ink-2); font-size: 1.15rem; }
+	.rss { justify-self: start; font: 500 0.8rem/1 var(--font-mono); color: var(--stamp); text-decoration: none; }
+	.rss:hover { text-decoration: underline; }
+
+	.posts { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
+	.post a {
+		display: grid; gap: 0.7rem;
+		padding: clamp(1.25rem, 3vw, 2rem);
+		border: 1px solid var(--rule);
+		border-radius: 1rem;
+		text-decoration: none;
+		transition: border-color 0.15s ease, background 0.15s ease;
+	}
+	.post a:hover { border-color: var(--ink-2); background: var(--paper-2); }
+	.meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; align-items: center; font: 500 0.78rem/1 var(--font-mono); color: var(--ink-2); }
+	.tag { color: var(--stamp); text-transform: uppercase; letter-spacing: 0.06em; }
+	h2 { margin: 0; font: 750 clamp(1.4rem, 2.6vw, 1.8rem)/1.15 var(--font-display); letter-spacing: -0.025em; text-wrap: balance; }
+	.featured h2 { font-size: clamp(1.8rem, 4vw, 2.8rem); }
+	.post p { margin: 0; color: var(--ink-2); max-width: 46rem; }
+	.more { font-weight: 600; color: var(--stamp); font-size: 0.95rem; }
+	@media (prefers-reduced-motion: reduce) { .post a { transition: none; } }
+</style>

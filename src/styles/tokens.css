@@ -58,3 +58,12 @@
 	--lens: #7cc8f0;
 	color-scheme: dark;
 }
+
+/* Excalidraw drawings in docs and posts: name files *.excalidraw.svg, export with a transparent
+   background. In dark mode they are inverted like excalidraw.com does, keeping hues. */
+:root[data-theme='dark'] :is(.sl-markdown-content, .prose) img[src*='.excalidraw'] {
+	filter: invert(93%) hue-rotate(180deg);
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme]) .prose img[src*='.excalidraw'] { filter: invert(93%) hue-rotate(180deg); }
+}

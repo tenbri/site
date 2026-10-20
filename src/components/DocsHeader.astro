@@ -1,0 +1,28 @@
+---
+// Docs header that matches the landing and blog nav: brand, the same links, then search and theme.
+import Search from '@astrojs/starlight/components/Search.astro';
+import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
+import ThemeSelect from '@astrojs/starlight/components/ThemeSelect.astro';
+---
+
+<div class="hdr">
+	<SiteTitle />
+	<nav class="links sl-hidden md:sl-flex" aria-label="Main">
+		<a href="/docs/introduction/" aria-current="page">Docs</a>
+		<a href="/blog/">Blog</a>
+		<a href="https://github.com/tenbri/tenbri/releases">Releases</a>
+		<a href="https://github.com/tenbri/tenbri">GitHub</a>
+	</nav>
+	<div class="right">
+		<Search />
+		<div class="sl-hidden md:sl-flex"><ThemeSelect /></div>
+	</div>
+</div>
+
+<style>
+	.hdr { display: flex; align-items: center; gap: 2rem; height: 100%; }
+	.links { gap: 1.5rem; font-size: 0.95rem; font-weight: 500; }
+	.links a { color: var(--sl-color-gray-3); text-decoration: none; }
+	.links a:hover, .links a[aria-current='page'] { color: var(--sl-color-white); }
+	.right { margin-left: auto; display: flex; align-items: center; gap: 1rem; }
+</style>

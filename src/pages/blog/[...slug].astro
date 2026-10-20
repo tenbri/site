@@ -1,0 +1,83 @@
+---
+import { getCollection, render } from 'astro:content';
+import Site from '../../layouts/Site.astro';
+
+export async function getStaticPaths() {
+	const posts = await getCollection('blog');
+	return posts.map((post) => ({ params: { slug: post.id }, props: { post } }));
+}
+
+const { post } = Astro.props;
+const { Content } = await render(post);
+const fmt = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+const minutes = Math.max(1, Math.round((post.body ?? '').split(/\s+/).length / 230));
+---
+
+<Site title={`${post.data.title} · Tenbri`} description={post.data.excerpt}>
+	<main class="wrap">
+		<article class="post">
+			<header class="head">
+				<a class="back" href="/blog/">← Blog</a>
+				<div class="tags">{post.data.tags.map((t) => <span>{t}</span>)}</div>
+				<h1>{post.data.title}</h1>
+				<p class="dek">{post.data.excerpt}</p>
+				<div class="meta">
+					<span>{post.data.author}</span>
+					<time datetime={post.data.date.toISOString()}>{fmt(post.data.date)}</time>
+					<span>{minutes} min read</span>
+				</div>
+			</header>
+
+			<div class="prose">
+				<Content />
+			</div>
+
+			<footer class="cta">
+				<div>
+					<p class="cta-title">Tenbri is open source.</p>
+					<p>A tamper-evident audit trail for AI agents, written in Rust. Apache-2.0.</p>
+				</div>
+				<a href="https://github.com/tenbri/tenbri">Star on GitHub</a>
+			</footer>
+		</article>
+	</main>
+</Site>
+
+<style>
+	.post { max-width: 44rem; margin-inline: auto; padding-block: clamp(2.5rem, 6vw, 4.5rem) clamp(4rem, 8vw, 6rem); }
+	.head { display: grid; gap: 1rem; padding-bottom: 2rem; margin-bottom: 2.5rem; border-bottom: 1px solid var(--rule); }
+	.back { justify-self: start; font: 500 0.85rem/1 var(--font-mono); color: var(--ink-2); text-decoration: none; }
+	.back:hover { color: var(--ink); }
+	.tags { display: flex; gap: 0.75rem; font: 500 0.75rem/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--stamp); }
+	h1 { margin: 0; font: 800 clamp(2.4rem, 6vw, 3.8rem)/1.02 var(--font-display); letter-spacing: -0.04em; text-wrap: balance; }
+	.dek { margin: 0; font-size: 1.25rem; line-height: 1.5; color: var(--ink-2); }
+	.meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem; font: 500 0.8rem/1 var(--font-mono); color: var(--ink-2); }
+
+	.prose { font-size: 1.125rem; line-height: 1.75; }
+	.prose :global(> * + *) { margin-top: 1.25em; }
+	.prose :global(h2) { margin-top: 2.6em; font: 750 1.75rem/1.15 var(--font-display); letter-spacing: -0.025em; text-wrap: balance; }
+	.prose :global(h3) { margin-top: 2em; font: 700 1.25rem/1.25 var(--font-display); letter-spacing: -0.015em; }
+	.prose :global(h2 + *), .prose :global(h3 + *) { margin-top: 0.6em; }
+	.prose :global(p), .prose :global(ul), .prose :global(ol) { margin-bottom: 0; }
+	.prose :global(ul), .prose :global(ol) { padding-left: 1.25rem; }
+	.prose :global(li + li) { margin-top: 0.5em; }
+	.prose :global(li::marker) { color: var(--stamp); }
+	.prose :global(strong) { font-weight: 650; }
+	.prose :global(a) { text-decoration-color: var(--stamp); text-underline-offset: 3px; text-decoration-thickness: 1.5px; }
+	.prose :global(a:hover) { color: var(--stamp); }
+	.prose :global(:not(pre) > code) { font: 0.85em var(--font-mono); background: var(--paper-2); border: 1px solid var(--rule); padding: 0.1em 0.35em; border-radius: 0.35rem; }
+	.prose :global(pre) { font-size: 0.85rem; line-height: 1.6; padding: 1.1rem 1.25rem; border-radius: 0.75rem; overflow-x: auto; }
+	.prose :global(pre code) { font-family: var(--font-mono); }
+	.prose :global(blockquote) { margin-inline: 0; padding-left: 1.25rem; border-left: 3px solid var(--stamp); color: var(--ink-2); }
+
+	.cta {
+		margin-top: 4rem;
+		padding: 1.5rem;
+		border-radius: 1rem;
+		background: var(--paper-2);
+		display: flex; flex-wrap: wrap; gap: 1rem 2rem; align-items: center; justify-content: space-between;
+	}
+	.cta p { margin: 0; color: var(--ink-2); }
+	.cta .cta-title { font: 750 1.2rem/1.2 var(--font-display); color: var(--ink); margin-bottom: 0.3rem; }
+	.cta a { padding: 0.65rem 1.1rem; border-radius: 0.6rem; background: var(--stamp); color: #fff; font-weight: 600; text-decoration: none; }
+</style>

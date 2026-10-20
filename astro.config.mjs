@@ -1,7 +1,6 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
-import starlightBlog from 'starlight-blog';
 
 export default defineConfig({
 	site: 'https://tenbri.com',
@@ -15,14 +14,7 @@ export default defineConfig({
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/tenbri/tenbri' }],
 			editLink: { baseUrl: 'https://github.com/tenbri/site/edit/main/' },
 			lastUpdated: true,
-			plugins: [
-				starlightBlog({
-					authors: {
-						amine: { name: 'Amine', title: 'Tenbri maintainer', url: 'https://github.com/tenbri' },
-					},
-					metrics: { readingTime: true },
-				}),
-			],
+			components: { Header: './src/components/DocsHeader.astro' },
 			sidebar: [
 				{ label: 'Start here', items: [{ autogenerate: { directory: 'docs' } }] },
 			],
