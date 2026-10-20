@@ -1,6 +1,7 @@
 {
   "pages": [
     "install",
-    "quickstart"
+    "quickstart",
+    "ui"
   ]
 }

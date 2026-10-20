@@ -171,7 +171,8 @@ tenbrid --config tenbrid.toml
 ```
 
 `tenbrid token` prints the token once (it is not stored) and the `[[tokens]]` entry that
-configures it by its hash. `tenbrid` serves until SIGINT or SIGTERM, then stops accepting requests
+configures it by its hash. Open http://127.0.0.1:7070 to browse the stream in
+[Tenbri UI](/docs/getting-started/ui/). `tenbrid` serves until SIGINT or SIGTERM, then stops accepting requests
 and waits for the writes in flight. It exits 0 after a clean shutdown and 2 on a configuration or
 startup error. Walk through it in [tenbrid over REST](/docs/examples/tenbrid-rest/); the routes are
 in the [API reference](/docs/reference/api/).
