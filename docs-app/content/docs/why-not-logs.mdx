@@ -1,9 +1,9 @@
 ---
 title: Why not just logs?
-description: How Tenbri differs from application logs and observability tools.
+description: How an Agent Decision Record differs from application logs and observability traces.
 ---
 
-Logs tell operators what happened. Tenbri gives anyone, including someone who does not trust the
+Logs tell operators what happened, and traces show how an agent ran. An Agent Decision Record gives anyone, including someone who does not trust the
 operator, proof of what an agent decided and why.
 
 | | Application logs | Tenbri |
@@ -16,6 +16,15 @@ operator, proof of what an agent decided and why.
 | Timing | After the fact | The intent before the action, the outcome after |
 | Sharing with an auditor | Give them access to your systems | A receipt that verifies on its own, offline |
 | Personal data | Copied into log lines | Only hashes in the chain; bodies encrypted and erasable |
+
+## Logs, traces, decision records
+
+| | Logs | Traces (Langfuse, MLflow, OpenTelemetry) | Decision records (Tenbri) |
+|---|---|---|---|
+| What it answers | What a service printed | How the agent ran: steps, latency, tokens, cost | What the agent decided, and on whose authority |
+| Who it serves | Operators | Engineers improving the agent | Auditors, customers, regulators and incident review |
+| Can it be altered? | Yes: edited, rotated, deleted | Yes: sampled, rewritten, expired | No: any change fails verification |
+| Can a third party verify it? | No, they must trust you | No, they need your account | Yes, offline, with one fingerprint |
 
 Tenbri does not replace logs, traces or observability tools: it records decisions and links to the
 trace that produced them (OpenTelemetry trace and span ids).
