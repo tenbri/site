@@ -1,0 +1,109 @@
+---
+title: Architecture
+description: How Tenbri's parts fit together, from the code that records a decision to the auditor who verifies it, and which parts are optional or coming soon.
+sidebar:
+  order: 0
+tableOfContents: false
+---
+
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import ArchDiagram from '../../../../components/ArchDiagram.astro';
+
+Tenbri has one job: turn what your agents decide into a record nobody can quietly change, and
+let anyone check it later without access to your systems. Every path through it follows the same
+four steps. A decision is **written**, **signed and chained** by the Rust core, **stored** as plain
+files, and **proved** offline against one pinned fingerprint.
+
+<ArchDiagram />
+
+Each part links to its page. Core parts are always there. Optional parts you turn on when you need
+them. Parts marked coming soon are on the [roadmap](https://github.com/tenbri/tenbri#status) for
+v0.1.0 or later and are not in the current release.
+
+## 1. Write
+
+Decisions enter Tenbri in one of three ways, and all of them end in the same entries.
+
+- **In your code.** `tenbri.init()` opens a stream from `TENBRI_STREAM` and friends, and
+  `@tenbri.decision` (Python) or `decision({...}, fn)` (TypeScript) records each call: the intent
+  before the function runs, the outcome after it. See the [Quickstart](/docs/getting-started/quickstart/).
+- **From your agent framework.** One line after `init()`, such as
+  `tenbri.instrument_claude_agent_sdk()`, records every tool call, approval and handoff. See
+  [Adapters](/docs/adapters/).
+- **From anything else.** `tenbri append` takes one JSON entry on stdin, and `tenbrid` (optional)
+  takes the same over REST or gRPC with bearer tokens and idempotency keys. See the
+  [CLI](/docs/reference/cli/) and the [tenbrid API](/docs/reference/api/).
+
+<Aside type="note" title="Coming soon">
+Entries written by a network proxy on the agent's way out, so an action is recorded even when the
+agent does not report it, and ingestion from existing pipelines and Kafka.
+</Aside>
+
+## 2. Sign and chain
+
+The same Rust core runs inside the Python and Node packages, the CLI and `tenbrid`, so every writer
+produces identical entries.
+
+- Each entry is serialised to canonical bytes, links to the hash of the entry before it, and is
+  signed with Ed25519 by a short-lived **session key** that the **stream key** certified. See
+  [Integrity](/docs/concepts/integrity/) and [Keys](/docs/concepts/keys/).
+- An **intent** is durable before the action runs. If it cannot be written, the action does not
+  run, unless you chose `fail_open`. The **outcome** closes it: `ok`, `refused`, `error` or
+  `unknown`.
+- **Action schemas** (optional) in `tenbri.toml` say what each action must carry: its target, the
+  policy that allows it, whether a person approves it. The SDKs use them to map tool calls to
+  actions, and `tenbrid` enforces them at write time. See [Action schemas](/docs/reference/schemas/).
+- **Privacy** (optional) keeps content out of the chain: bodies are encrypted, inputs are pinned by
+  keyed digests per subject, and erasing a subject's keys makes their data unreadable while the
+  chain still verifies. See [Privacy](/docs/concepts/privacy/).
+
+## 3. Store
+
+A stream is a directory of plain files: batches of entries, checkpoints, timestamps and encrypted
+blobs. It lives on a local disk, Cloudflare R2 or MinIO, and on AWS S3 once its testing on real S3
+is done. Signing keys live elsewhere: in a key directory or the OS keychain, never inside the
+stream. See [Storage](/docs/reference/storage/).
+
+The **query index** (optional) is a SQLite or Parquet file that finds entries fast. It never
+supplies them: every answer is re-read from storage and checked before it is returned, so an edited
+batch makes the query fail instead of returning stale data.
+
+## 4. Prove
+
+Proof needs the stream and one **pinned fingerprint**, nothing else.
+
+- **Verify** checks canonical bytes, the chain, every signature and every key, from the CLI, Python,
+  Node, `tenbrid`, or the browser with the WASM verifier.
+- **Checkpoints** are signed notes of the stream's size and Merkle root. One that an auditor kept
+  catches truncation and forks later.
+- **Receipts** prove chosen entries with their inclusion proofs and key history, so you can hand a
+  customer or a regulator proof of one decision without the rest of the stream.
+- **RFC 3161 timestamps** (optional) prove a checkpoint existed at a point in time.
+
+<Aside type="note" title="Coming soon">
+Publishing checkpoints to auditors and witnesses, Sigstore Rekor, alerts on silent streams and on
+actions no agent declared, a read-only viewer, an MCP server, and OpenLineage and W3C PROV
+exports.
+</Aside>
+
+## Where to run each part
+
+| Setup | What runs | When to choose it |
+| --- | --- | --- |
+| Embedded | The Python or Node package inside your agent process | One service, simplest setup |
+| Daemon | `tenbrid` next to your agents, written to over REST or gRPC | Many services or languages, central keys and schemas |
+| Verifier only | The CLI or the WASM verifier, with the pinned fingerprint | Auditors, CI checks, incident response |
+
+Whichever you choose, keep the writer and its keys outside the agent's trust boundary: an agent
+that can reach its own keys or storage can stop writing, and checkpoints held by someone else
+catch a stream cut short, and liveness alerts (coming soon) will catch a writer gone quiet. The
+[Hugging Face incident analysis](/blog/five-days-to-it-was-us/) walks through why.
+
+## Next
+
+<CardGrid>
+	<LinkCard title="Quickstart" description="Record and verify your first decisions in five minutes." href="/docs/getting-started/quickstart/" />
+	<LinkCard title="Adapters" description="One line for Claude, OpenAI and LangGraph agents." href="/docs/adapters/" />
+	<LinkCard title="Streams and entries" description="What an entry holds, field by field." href="/docs/concepts/streams-and-entries/" />
+	<LinkCard title="Integrity" description="Hashes, signatures, checkpoints and receipts." href="/docs/concepts/integrity/" />
+</CardGrid>
