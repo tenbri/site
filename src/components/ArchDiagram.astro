@@ -1,201 +1,202 @@
 ---
-// Tenbri's architecture as a top-to-bottom pipeline: write, sign and chain, store, prove.
-// Each part is marked core (solid), optional (dashed) or coming soon (dotted, muted).
-type Kind = 'core' | 'optional' | 'soon' | 'progress';
-interface Part { name: string; detail?: string; kind: Kind; href?: string }
-interface Tier { step: string; title: string; caption: string; parts: Part[] }
-
-const tiers: Tier[] = [
-	{
-		step: '1',
-		title: 'Write',
-		caption: 'Where decisions come from',
-		parts: [
-			{ name: '@tenbri.decision', detail: 'Python and TypeScript functions', kind: 'core', href: '/docs/reference/sdk/' },
-			{ name: 'Framework adapters', detail: 'Claude Agent SDK, OpenAI Agents SDK, LangGraph', kind: 'core', href: '/docs/adapters/' },
-			{ name: 'tenbri CLI', detail: 'tenbri append, one JSON entry', kind: 'core', href: '/docs/reference/cli/' },
-			{ name: 'tenbrid', detail: 'REST and gRPC daemon, for any language', kind: 'optional', href: '/docs/reference/api/' },
-			{ name: 'Proxy-observed entries', detail: 'what an agent did on the network', kind: 'soon' },
-			{ name: 'Ingest and Kafka', detail: 'entries from existing pipelines', kind: 'soon' },
-		],
-	},
-	{
-		step: '2',
-		title: 'Sign and chain',
-		caption: 'The Rust core, in every SDK and in tenbrid',
-		parts: [
-			{ name: 'Intent, then outcome', detail: 'written before the action, closed after it', kind: 'core', href: '/docs/concepts/streams-and-entries/' },
-			{ name: 'Hash chain and Ed25519', detail: 'canonical bytes, prev hash, session key signature', kind: 'core', href: '/docs/concepts/integrity/' },
-			{ name: 'Keys', detail: 'stream key, 24 h session keys, key files', kind: 'core', href: '/docs/concepts/keys/' },
-			{ name: 'OS keychain', detail: 'macOS and Windows', kind: 'optional', href: '/docs/concepts/keys/' },
-			{ name: 'Action schemas', detail: 'tenbri.toml: targets, policies, approvals', kind: 'optional', href: '/docs/reference/schemas/' },
-			{ name: 'Privacy', detail: 'encrypted bodies, keyed digests, erasure', kind: 'optional', href: '/docs/concepts/privacy/' },
-			{ name: 'PKCS#11, cloud KMS, passkeys', kind: 'soon' },
-		],
-	},
-	{
-		step: '3',
-		title: 'Store',
-		caption: 'Plain files on storage you control, keys kept apart',
-		parts: [
-			{ name: 'Local disk', kind: 'core', href: '/docs/reference/storage/' },
-			{ name: 'Cloudflare R2 and MinIO', kind: 'core', href: '/docs/examples/object-storage/' },
-			{ name: 'AWS S3', detail: 'tested on MinIO, real S3 before rc.1', kind: 'progress', href: '/docs/examples/object-storage/' },
-			{ name: 'Query index', detail: 'SQLite or Parquet, re-checked against storage', kind: 'optional', href: '/docs/reference/storage/' },
-			{ name: 'GCS, Azure Blob, Postgres', kind: 'soon' },
-			{ name: 'Iceberg index, --as-of', kind: 'soon' },
-		],
-	},
-	{
-		step: '4',
-		title: 'Prove',
-		caption: 'Anyone checks it offline, with one pinned fingerprint',
-		parts: [
-			{ name: 'Verify', detail: 'CLI, Python, Node, tenbrid', kind: 'core', href: '/docs/examples/verify-as-an-auditor/' },
-			{ name: 'Query and tail', detail: 'by input version, rule, action, trace', kind: 'core', href: '/docs/examples/policy-change-review/' },
-			{ name: 'Checkpoints and receipts', detail: 'Merkle proofs an auditor verifies alone', kind: 'core', href: '/docs/concepts/integrity/' },
-			{ name: 'WASM verifier', detail: 'verify in the browser', kind: 'optional', href: '/docs/getting-started/install/' },
-			{ name: 'RFC 3161 timestamps', kind: 'optional', href: '/docs/concepts/integrity/' },
-			{ name: 'Witnesses, Rekor, checkpoint publishing', kind: 'soon' },
-			{ name: 'Silent-stream and undeclared-action alerts', kind: 'soon' },
-			{ name: 'Read-only viewer, MCP server, exports', kind: 'soon' },
-		],
-	},
-];
+// Tenbri's architecture: four steps, each a card. Available parts carry a check, optional parts
+// a blue "optional" pill, and coming-soon parts sit apart in the card's muted footer.
+interface Item { name: string; detail?: string; href?: string; optional?: boolean; progress?: boolean }
+interface Step { title: string; who: string; icon: string; items: Item[]; soon: string[] }
 interface Props { wide?: boolean }
 const { wide = false } = Astro.props;
-const label: Record<Kind, string> = { core: '', optional: 'optional', soon: 'coming soon', progress: 'in progress' };
+
+const icons = {
+	write: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
+	chain: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
+	store: 'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
+	prove: 'M9 12l2 2 4-4m5 2a8 8 0 1 1-16 0 8 8 0 0 1 16 0z',
+};
+
+const steps: Step[] = [
+	{
+		title: 'Write',
+		who: 'Your agents and services',
+		icon: icons.write,
+		items: [
+			{ name: '@tenbri.decision', detail: 'Python and TypeScript', href: '/docs/reference/sdk/' },
+			{ name: 'Framework adapters', detail: 'Claude, OpenAI, LangGraph', href: '/docs/adapters/' },
+			{ name: 'tenbri CLI', detail: 'tenbri append', href: '/docs/reference/cli/' },
+			{ name: 'tenbrid', detail: 'REST and gRPC for any language', href: '/docs/reference/api/', optional: true },
+		],
+		soon: ['Proxy-observed entries', 'Ingest and Kafka'],
+	},
+	{
+		title: 'Sign and chain',
+		who: 'The Tenbri core (Rust)',
+		icon: icons.chain,
+		items: [
+			{ name: 'Intent, then outcome', detail: 'durable before the action runs', href: '/docs/concepts/streams-and-entries/' },
+			{ name: 'Hash chain, Ed25519', detail: 'certified session keys', href: '/docs/concepts/integrity/' },
+			{ name: 'Action schemas', detail: 'tenbri.toml', href: '/docs/reference/schemas/', optional: true },
+			{ name: 'Privacy', detail: 'encrypted bodies, erasure', href: '/docs/concepts/privacy/', optional: true },
+			{ name: 'OS keychain', detail: 'macOS and Windows', href: '/docs/concepts/keys/', optional: true },
+		],
+		soon: ['PKCS#11 and cloud KMS', 'Passkey attestations'],
+	},
+	{
+		title: 'Store',
+		who: 'Storage you control',
+		icon: icons.store,
+		items: [
+			{ name: 'Local disk', href: '/docs/reference/storage/' },
+			{ name: 'Cloudflare R2, MinIO', href: '/docs/examples/object-storage/' },
+			{ name: 'AWS S3', detail: 'real S3 tests before rc.1', href: '/docs/examples/object-storage/', progress: true },
+			{ name: 'Query index', detail: 'SQLite or Parquet', href: '/docs/reference/storage/', optional: true },
+		],
+		soon: ['GCS, Azure Blob, Postgres', 'Iceberg index, --as-of'],
+	},
+	{
+		title: 'Prove',
+		who: 'Anyone with the fingerprint',
+		icon: icons.prove,
+		items: [
+			{ name: 'Verify offline', detail: 'CLI, Python, Node, tenbrid', href: '/docs/examples/verify-as-an-auditor/' },
+			{ name: 'Query and tail', detail: 'by policy version, action, trace', href: '/docs/examples/policy-change-review/' },
+			{ name: 'Checkpoints, receipts', detail: 'proof for one decision', href: '/docs/concepts/integrity/' },
+			{ name: 'WASM verifier', detail: 'in the browser', href: '/docs/getting-started/install/', optional: true },
+			{ name: 'RFC 3161 timestamps', href: '/docs/concepts/integrity/', optional: true },
+		],
+		soon: ['Witnesses and Rekor', 'Silent-stream alerts', 'Viewer, MCP, exports'],
+	},
+];
+const flows = ['intents and outcomes', 'signed, chained entries', 'stream and pinned key'];
 ---
 
 <figure class:list={['arch not-content', { wide }]} aria-label="Tenbri architecture">
 	<ul class="legend" aria-label="Legend">
-		<li><span class="sw core"></span>Core</li>
-		<li><span class="sw optional"></span>Optional</li>
-		<li><span class="sw progress"></span>In progress</li>
-		<li><span class="sw soon"></span>Coming soon</li>
+		<li><span class="mk ok" aria-hidden="true">✓</span>Available</li>
+		<li><span class="pill opt">Optional</span>Turn it on when you need it</li>
+		<li><span class="pill prog">In progress</span></li>
+		<li><span class="pill later">Coming soon</span>On the roadmap</li>
 	</ul>
-	{tiers.map((t, i) => (
-		<>
-			<section class="tier">
-				<header>
-					<span class="step">{t.step}</span>
-					<div>
-						<p class="tt">{t.title}</p>
-						<p class="tc">{t.caption}</p>
-					</div>
-				</header>
-				<ul class="parts">
-					{t.parts.map((p) => {
-						const Tag = p.href ? 'a' : 'div';
-						return (
-							<li>
-								<Tag class:list={['part', p.kind]} href={p.href}>
-									<span class="pn">{p.name}</span>
-									{p.detail && <span class="pd">{p.detail}</span>}
-									{label[p.kind] && <span class="badge">{label[p.kind]}</span>}
-								</Tag>
+	<div class="steps">
+		{steps.map((s, i) => (
+			<>
+				<section class="card">
+					<header>
+						<span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d={s.icon} /></svg></span>
+						<div>
+							<p class="title"><span class="num">{i + 1}</span>{s.title}</p>
+							<p class="who">{s.who}</p>
+						</div>
+					</header>
+					<ul class="items">
+						{s.items.map((it) => (
+							<li class:list={{ opt: it.optional, prog: it.progress }}>
+								<span class="mk" aria-hidden="true">{it.optional ? '+' : '✓'}</span>
+								<a href={it.href}>
+									<span class="nm">{it.name}</span>
+									{it.detail && <span class="dt">{it.detail}</span>}
+									{it.optional && <span class="pill opt">Optional</span>}
+									{it.progress && <span class="pill prog">In progress</span>}
+								</a>
 							</li>
-						);
-					})}
-				</ul>
-			</section>
-			{i < tiers.length - 1 && (
-				<div class="flow" aria-hidden="true">
-					<svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m-6-6 6 6 6-6" /></svg>
-				</div>
-			)}
-		</>
-	))}
+						))}
+					</ul>
+					<div class="soon">
+						<p class="soon-h"><span class="pill later">Coming soon</span></p>
+						<ul>{s.soon.map((n) => <li>{n}</li>)}</ul>
+					</div>
+				</section>
+				{i < steps.length - 1 && (
+					<div class="flow" aria-hidden="true">
+						<svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m-6-6 6 6 6-6" /></svg>
+						<span>{flows[i]}</span>
+					</div>
+				)}
+			</>
+		))}
+	</div>
 </figure>
 
 <style>
 	.arch {
 		--a-line: var(--sl-color-gray-5, var(--rule));
 		--a-muted: var(--sl-color-gray-3, var(--ink-2));
-		--a-dim: var(--sl-color-gray-4, color-mix(in srgb, var(--ink-2) 60%, transparent));
 		--a-ink: var(--sl-color-white, var(--ink));
-		--a-chip: var(--sl-color-gray-6, var(--paper-2));
 		--a-card: var(--sl-color-black, var(--paper));
-		--a-panel: var(--sl-color-gray-7, var(--sl-color-gray-6, var(--paper-2)));
+		--a-panel: var(--sl-color-gray-6, var(--paper-2));
+		--a-blue: #4c8dff;
 		margin: 2rem 0;
-		padding: clamp(1rem, 3vw, 1.5rem);
-		border: 1px solid var(--a-line);
-		border-radius: 1rem;
-		background: var(--a-panel);
 		display: grid;
-		gap: 0.25rem;
+		gap: 1rem;
 	}
-	.legend { list-style: none; margin: 0 0 0.9rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.8rem; color: var(--a-muted); }
+	.legend {
+		list-style: none; margin: 0; padding: 0;
+		display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem 1.4rem;
+		font-size: 0.85rem; color: var(--a-muted);
+	}
 	.legend li { display: inline-flex; align-items: center; gap: 0.45rem; margin: 0; }
-	.sw { width: 1.4rem; height: 0.9rem; border-radius: 0.3rem; border: 1.5px solid var(--a-muted); background: var(--a-card); }
-	.sw.core { border-color: var(--stamp); }
-	.sw.optional { border-style: dashed; }
-	.sw.progress { border-color: var(--amber); border-style: dashed; }
-	.sw.soon { border-style: dotted; opacity: 0.6; }
 
-	.tier {
-		border: 1px solid var(--a-line);
-		border-radius: 0.85rem;
-		background: var(--a-card);
-		padding: 1rem;
-		display: grid;
-		gap: 0.85rem;
-	}
-	.tier header { display: flex; align-items: center; gap: 0.75rem; }
-	.step {
+	.mk { flex: none; display: grid; place-items: center; width: 1.25rem; height: 1.25rem; border-radius: 50%; font: 700 0.72rem/1 var(--font-body); }
+	.mk.ok, .items li .mk { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+	.items li.opt .mk { background: color-mix(in srgb, var(--a-blue) 22%, transparent); color: var(--a-blue); font-size: 0.95rem; }
+	.items li.prog .mk { background: color-mix(in srgb, var(--amber) 22%, transparent); color: var(--amber); }
+
+	.pill {
 		flex: none;
-		display: grid; place-items: center;
-		width: 1.9rem; height: 1.9rem;
-		border-radius: 50%;
-		background: var(--stamp);
-		color: #fff;
-		font: 600 0.85rem/1 var(--font-mono);
-	}
-	.tt { margin: 0; font: 750 1.05rem/1.2 var(--font-display); color: var(--a-ink); }
-	.tc { margin: 0; font-size: 0.85rem; color: var(--a-muted); }
-	.parts { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: 0.5rem; }
-	.parts li { margin: 0; display: flex; }
-	.part {
-		flex: 1;
-		display: grid; align-content: start; gap: 0.2rem;
-		padding: 0.6rem 0.75rem;
-		border-radius: 0.6rem;
-		border: 1.5px solid var(--a-dim);
-		color: var(--a-ink);
-		text-decoration: none;
-		position: relative;
-	}
-	a.part:hover { background: var(--a-chip); }
-	.part.core { border-color: var(--stamp); }
-	.part.optional { border-style: dashed; }
-	.part.progress { border-color: var(--amber); border-style: dashed; }
-	.part.soon { border-style: dotted; color: var(--a-muted); }
-	.pn { font-weight: 600; font-size: 0.9rem; line-height: 1.3; }
-	.pd { font-size: 0.78rem; line-height: 1.35; color: var(--a-muted); }
-	.badge {
-		justify-self: start;
-		margin-top: 0.25rem;
-		font: 500 0.66rem/1 var(--font-mono);
+		display: inline-block;
+		font: 600 0.64rem/1 var(--font-mono);
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
-		padding: 0.25rem 0.4rem;
+		padding: 0.3rem 0.45rem;
 		border-radius: 999px;
-		background: var(--a-chip);
-		color: var(--a-ink);
 	}
-	.progress .badge { color: var(--amber); }
-	.flow { display: grid; place-items: center; color: var(--stamp); padding: 0.15rem 0; }
-	/* Wide: the four steps side by side (landing page) */
-	@media (min-width: 1000px) {
-		.arch.wide { grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 1.6rem; align-items: stretch; margin: 0; }
-		.arch.wide .legend { grid-column: 1 / -1; justify-content: center; }
-		.arch.wide .flow { display: none; }
-		.arch.wide .tier { position: relative; align-content: start; }
-		.arch.wide .tier:not(:last-of-type)::after {
-			content: '→';
-			position: absolute; right: -1.35rem; top: 1.15rem;
-			color: var(--stamp); font: 600 1.1rem/1 var(--font-mono);
-		}
-		.arch.wide .parts { grid-template-columns: minmax(0, 1fr); }
+	.pill.opt { background: var(--a-blue); color: #fff; }
+	.pill.prog { background: var(--amber); color: #1b1203; }
+	.pill.later { background: transparent; color: var(--a-muted); border: 1px dashed var(--a-muted); }
+
+	.steps { display: grid; gap: 0.25rem; }
+	.card {
+		border: 1px solid var(--a-line);
+		border-radius: 1rem;
+		background: var(--a-card);
+		display: grid;
+		grid-template-rows: auto 1fr auto;
+		overflow: hidden;
+	}
+	.card header { display: flex; gap: 0.75rem; align-items: center; padding: 1rem 1.1rem 0.8rem; }
+	.ic {
+		flex: none; display: grid; place-items: center;
+		width: 2.4rem; height: 2.4rem;
+		border-radius: 0.7rem;
+		background: color-mix(in srgb, var(--stamp) 16%, transparent);
+		color: var(--stamp);
+	}
+	.title { margin: 0; display: flex; align-items: center; gap: 0.45rem; font: 750 1.08rem/1.2 var(--font-display); color: var(--a-ink); }
+	.num { font: 600 0.75rem/1 var(--font-mono); color: var(--stamp); }
+	.who { margin: 0.15rem 0 0; font-size: 0.84rem; color: var(--a-muted); }
+
+	.items { list-style: none; margin: 0; padding: 0 1.1rem 1rem; display: grid; gap: 0.55rem; align-content: start; }
+	.items li { margin: 0; display: flex; align-items: flex-start; gap: 0.6rem; }
+	.items li .mk { margin-top: 0.1rem; }
+	.items a { flex: 1; min-width: 0; display: grid; text-decoration: none; color: var(--a-ink); }
+	.items a:hover .nm { color: var(--stamp); }
+	.nm { font-weight: 600; font-size: 0.92rem; line-height: 1.35; }
+	.dt { font-size: 0.8rem; line-height: 1.35; color: var(--a-muted); }
+	.items .pill { justify-self: start; margin-top: 0.3rem; }
+
+	.soon { background: var(--a-panel); border-top: 1px dashed var(--a-line); padding: 0.75rem 1.1rem 0.9rem; }
+	.soon-h { margin: 0 0 0.45rem; }
+	.soon ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
+	.soon li { margin: 0; font-size: 0.82rem; color: var(--a-muted); }
+	.soon li::before { content: '○ '; }
+
+	.flow { display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.35rem 0; color: var(--stamp); }
+	.flow span { font: 500 0.75rem/1 var(--font-mono); color: var(--a-muted); }
+
+	/* Four across on the landing page */
+	@media (min-width: 1100px) {
+		.arch.wide { margin: 0; }
+		.arch.wide .steps { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 0; align-items: stretch; }
+		.arch.wide .flow { flex-direction: column; padding: 0 0.3rem; width: 4.6rem; }
+		.arch.wide .flow svg { rotate: -90deg; }
+		.arch.wide .flow span { text-align: center; font-size: 0.66rem; line-height: 1.3; }
 	}
 </style>
