@@ -1,0 +1,90 @@
+---
+title: What the Hugging Face intrusion says about agent audit trails
+date: 2026-10-20
+authors: amine
+tags: [incidents, roadmap]
+excerpt: Days passed before anyone knew whose agents breached Hugging Face. Here is what a signed record of agent decisions changes, what it doesn't, and what we're building next because of it.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+In July 2026, autonomous agents running on OpenAI models breached Hugging Face's infrastructure. The agents had been pointed at a cybersecurity benchmark, escaped their evaluation sandbox through a package proxy, and spent days moving through Hugging Face's dataset pipeline, Kubernetes clusters and corporate VPN.
+Hugging Face's [technical timeline](https://huggingface.co/blog/agent-intrusion-technical-timeline) counts about 17,600 recovered actions between July 9 and July 13.
+
+Much has been written about the sandbox, the zero-days and the policy fallout. This post is about a narrower question, the one Tenbri exists for: **after the fact, how fast could anyone prove which agent did what, and on whose authority?**
+
+{/* Illustration idea: a timeline from July 9 to July 21, with "breach", "disclosure without a name" and "attribution" marked, and the gap shaded. */}
+
+## Tenbri would not have stopped this
+
+Let's be clear first. Tenbri is not a sandbox, a firewall or a detection system. It would not have blocked the SSRF, the privileged pods or the leaked tokens. Hugging Face's own recommendations are the right fixes: close the code-execution paths, block metadata access from pods, scope and shorten credentials, reject privileged pods, isolate evaluations from production networks.
+
+What Tenbri does is keep a signed, chained record of what agents decided and did, on storage the operator controls, that anyone can verify offline. That matters for the questions that took the longest to answer.
+
+## The questions that took days
+
+**Whose agents were these?** Hugging Face disclosed the intrusion on July 16 without naming the attacker. OpenAI recognized its own agents only around July 18–20, and the joint attribution came on July 21 ([Wikipedia summary of the reporting](https://en.wikipedia.org/wiki/OpenAI_rogue_agent_breach_of_Hugging_Face)). The Cloud Security Alliance notes that OpenAI first asked Hugging Face to help revoke credentials that were already revoked ([CSA research note](https://labs.cloudsecurityalliance.org/research/csa-research-note-autonomous-ai-agent-intrusion-openai-huggi/)).
+
+**Which run, which agents?** Estimates of how many agents took part range from about 700 to over 1,200. OpenAI acknowledged that monitoring of model trajectories was not in place during the evaluation.
+
+**What did they see, and why did they act?** Hugging Face rebuilt the story from its own platform logs and from agent logs partly recovered from the attacker's launchpad. The agents' reasoning stayed mostly out of view.
+
+**Which human decisions made it possible?** Safeguards had been relaxed to test offensive capability. The [Bulletin of the Atomic Scientists](https://thebulletin.org/2026/09/rogue-ai-didnt-breach-hugging-face-human-decisions-did/) argues the core of the incident was a series of human choices that traded security for speed.
+
+Each of these is a records problem as much as a security problem.
+
+## What already exists in Tenbri
+
+These are in `0.1.0-alpha` today.
+
+- **A key per run, a signature per entry.** Each writer signs with a short-lived session key certified by the stream key. Every entry names its signer, so "an agent did it" becomes "session `sess:2026-07-09:4be1…` of stream `tnb1:…` did it".
+- **Approvals as their own entries.** Relaxing a safeguard is a decision. Recorded as a signed `approval` entry, it names who approved it and which version of the evaluation policy it changed, and the intents that relied on it point back to it by hash.
+- **Intent before action, outcome after.** An agent writes what it is about to do, with the inputs it relied on, before acting. An intent with no outcome after an hour gets a `reconcile` entry, so silence shows up in the record.
+- **Verification without access.** A victim, a regulator or an independent reviewer can check the stream offline against one pinned fingerprint. A checkpoint they saw earlier also proves nothing was trimmed later.
+
+That covers agents that write to Tenbri. The July incident shows the harder case: an agent that is doing things nobody asked it to record.
+
+## What we're building next: fleet and liveness
+
+We added a **fleet and liveness** track to the [roadmap](https://github.com/tenbri/tenbri#status) this week, with one goal: **an operator should be able to attribute an agent's actions to a run within hours of an outside report**, not days.
+
+<Aside type="caution" title="Planned">
+None of the features below has shipped yet. Command names and flags may change before v0.1.0.
+</Aside>
+
+### Network targets on every action
+
+Actions gain structured target fields under `action.net`: host, IP and port, indexed for search. When a victim publishes indicators, the operator asks one question:
+
+```sh
+# planned
+tenbri query ./evals --target-domain huggingface.co
+tenbri query ./evals --target-ip 203.0.113.42
+```
+
+Each result names the stream, the session key that signed it, the run it belonged to and the trace that produced it.
+
+### Proxy-observed entries
+
+Agents can forget, refuse or be unable to log. A network proxy can't. The proxy that sits on an agent's only route out writes its own entry for each connection, signed with its own key, into the same chain. In this incident, the evaluation's only permitted internet route was a package proxy. That is exactly where an independent witness belongs.
+
+### Actions nobody declared
+
+With both sides recorded, the gap becomes queryable:
+
+```sh
+# planned: connections the proxy saw with no matching agent intent
+tenbri query ./evals --unmatched
+```
+
+An agent that declares "install a package" and then opens a connection to someone else's dataset server shows up here, as it happens or afterwards.
+
+### Run registration and silent-stream alerts
+
+`tenbrid` will know which runs are supposed to be active and alert when a registered run's stream goes quiet. A run that stops writing while it still holds credentials is worth a page, whether the cause is a crash, a disabled monitor or an agent that learned to stop reporting.
+
+## Where this still falls short
+
+An agent that escapes past every proxy and writer leaves no Tenbri entries, and a signature proves who wrote an entry, not that the entry tells the whole story. Tenbri narrows the gap between "something happened" and "we can prove which run did it". The sandbox still has to hold.
+
+We're building this in the open. If you run agent evaluations or respond to incidents like this one, tell us what you would have needed on July 16: [open an issue](https://github.com/tenbri/tenbri/issues) or star the [repository](https://github.com/tenbri/tenbri) to follow along.
