@@ -1,6 +1,10 @@
 ---
 import { Image } from 'astro:assets';
 import mascot from '../assets/mascot.webp';
+import uiOverview from '../assets/ui/overview.webp';
+import uiDecisions from '../assets/ui/decisions.webp';
+import uiTrace from '../assets/ui/trace.webp';
+import uiIntegrity from '../assets/ui/integrity.webp';
 import Site from '../layouts/Site.astro';
 import CodeWindow from '../components/CodeWindow.astro';
 import TerminalPlayer from '../components/TerminalPlayer.astro';
@@ -187,6 +191,15 @@ const session = [
 	{ chapter: 'Caught', note: 'the first changed entry fails verification', cmd: 'tenbri verify', out: 'broken at seq 5: bad_signature: the signature does not verify\n4 entries verified before it, stream tnb1:986d8e32…3588 (the pin recorded in ~/demo/keys/pins)' },
 ];
 
+// Tenbri UI showcase: screenshots of tenbrid's UI on a seeded week of support, billing, triage
+// and ops agents.
+const screens = [
+	{ id: 'overview', label: 'Overview', img: uiOverview, alt: 'Tenbri UI overview: decisions by outcome status over a week, error and refusal rates, latency p50 and p95, top actions and principals', caption: 'Volume by outcome, error and refusal rates, intent to outcome latency, and which agents and actions dominate.' },
+	{ id: 'decisions', label: 'Decisions', img: uiDecisions, alt: 'Tenbri UI decisions table: time, action, principal, target, status, latency, rule and verification for each decision', caption: 'Every intent joined with its outcome. Filter by status, action or principal, search targets and subjects, pick columns.' },
+	{ id: 'trace', label: 'Trace', img: uiTrace, alt: 'Tenbri UI trace view: a timeline of three agent decisions under one OpenTelemetry trace, with the selected entry\'s details', caption: 'One OpenTelemetry trace as a timeline: each intent runs to its outcome, colored by status, with the signed entry beside it.' },
+	{ id: 'integrity', label: 'Integrity', img: uiIntegrity, alt: 'Tenbri UI integrity page: the stream verifies against its pinned key, with the head, checkpoint and key events', caption: 'Whether the whole stream verifies against its pinned key, plus the head, the latest checkpoint and every key event.' },
+];
+
 const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', 'SOC 2', 'ISO/IEC 27001', 'ISO/IEC 42001', 'NIST AI RMF'];
 ---
 
@@ -250,6 +263,36 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 				</div>
 				<div class="fw">
 					{frameworks.map((f) => <a href={f.href}><span class="fi" set:html={f.icon} />{f.name}</a>)}
+				</div>
+			</div>
+		</section>
+
+		<section class="band" aria-labelledby="ui-title">
+			<div class="wrap section-head center">
+				<p class="eyebrow">Tenbri UI</p>
+				<h2 id="ui-title">See what your agents decided</h2>
+				<p class="sub">tenbrid serves a read-only UI over your streams: dashboards, every decision with its outcome, traces as timelines, and a verification check. Open it with a bearer token; it cannot write.</p>
+			</div>
+			<div class="wrap uishow">
+				<div class="uiframe">
+					<div class="uibar">
+						<span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+						<div class="uitabs" role="tablist" aria-label="Tenbri UI pages">
+							{screens.map((s, i) => (
+								<button type="button" role="tab" class="uitab" id={`uitab-${s.id}`} aria-controls={`uipanel-${s.id}`} aria-selected={i === 0 ? 'true' : 'false'}>{s.label}</button>
+							))}
+						</div>
+						<span class="uiurl">127.0.0.1:7070</span>
+					</div>
+					{screens.map((s, i) => (
+						<div class="uipanel" role="tabpanel" id={`uipanel-${s.id}`} aria-labelledby={`uitab-${s.id}`} hidden={i !== 0}>
+							<Image src={s.img} alt={s.alt} widths={[960, 1440, 1920]} sizes="(max-width: 1180px) 100vw, 72rem" loading={i === 0 ? 'eager' : 'lazy'} />
+						</div>
+					))}
+				</div>
+				{screens.map((s, i) => <p class="uicap" data-for={s.id} hidden={i !== 0}>{s.caption}</p>)}
+				<div class="center-link">
+					<a class="more" href="/docs/getting-started/ui/">Run Tenbri UI <span aria-hidden="true">→</span></a>
 				</div>
 			</div>
 		</section>
@@ -345,6 +388,17 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	</main>
 
 	<script>
+		// Tenbri UI tabs
+		const uitabs = [...document.querySelectorAll<HTMLButtonElement>('.uitab')];
+		for (const tab of uitabs) {
+			tab.addEventListener('click', () => {
+				const id = tab.id.replace('uitab-', '');
+				for (const t of uitabs) t.setAttribute('aria-selected', String(t === tab));
+				for (const p of document.querySelectorAll<HTMLElement>('.uipanel')) p.hidden = p.id !== `uipanel-${id}`;
+				for (const c of document.querySelectorAll<HTMLElement>('.uicap')) c.hidden = c.dataset.for !== id;
+			});
+		}
+
 		// Install tabs + copy
 		const text = document.getElementById('install-text')!;
 		const icopy = document.getElementById('icopy')!;
@@ -482,6 +536,25 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	.section-head { display: grid; gap: 1rem; }
 	.section-head.center { justify-items: center; text-align: center; }
 	.player { max-width: 70rem; width: 100%; }
+	.uishow { max-width: 72rem; width: 100%; display: grid; gap: 1.25rem; justify-items: center; }
+	.uiframe {
+		width: 100%; border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; background: var(--term-bg);
+		box-shadow: 0 30px 80px -30px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 255 255 / 0.03);
+	}
+	.uibar { display: flex; align-items: center; gap: 1rem; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--term-chip); }
+	.uibar .lights { display: flex; gap: 6px; }
+	.uibar .lights i { width: 10px; height: 10px; border-radius: 50%; background: var(--term-chip); }
+	.uitabs { display: flex; gap: 0.25rem; overflow-x: auto; }
+	.uitab {
+		font: 500 0.85rem/1 var(--font-body); color: var(--term-dim); background: none; border: 0; border-radius: 8px;
+		padding: 0.5rem 0.8rem; cursor: pointer; white-space: nowrap;
+	}
+	.uitab:hover { color: var(--term-fg); }
+	.uitab[aria-selected='true'] { color: var(--term-fg); background: var(--term-chip); }
+	.uiurl { margin-left: auto; font: 0.75rem var(--font-mono); color: var(--term-dim); }
+	.uipanel img { display: block; width: 100%; height: auto; }
+	.uicap { color: var(--ink-2); text-align: center; max-width: 40rem; margin: 0; }
+	@media (max-width: 640px) { .uiurl { display: none; } }
 	.fw { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem; }
 	.fw a {
 		padding: 0.55rem 0.95rem;
