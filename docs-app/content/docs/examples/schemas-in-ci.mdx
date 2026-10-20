@@ -15,7 +15,7 @@ checks on every pull request.
 - The `tenbri` CLI, which runs every check:
 
   ```sh
-  cargo install tenbri-cli --version 0.1.0-beta.3 --locked
+  cargo install tenbri-cli --version 0.1.0-beta.5 --locked
   ```
 
 - A stream with refund decisions, such as the one from [Record a refund](/docs/examples/record-a-refund/),
@@ -74,7 +74,7 @@ bun add tenbri@next
 `curl` and `tenbrid`:
 
 ```sh
-cargo install tenbri-server --version 0.1.0-beta.3 --locked
+cargo install tenbri-server --version 0.1.0-beta.5 --locked
 ```
 
 </Tab>
@@ -501,7 +501,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Install tenbri
-        run: cargo install tenbri-cli --version 0.1.0-beta.3 --locked
+        run: cargo install tenbri-cli --version 0.1.0-beta.5 --locked
       - name: Check tenbri.toml
         run: tenbri schema check --schema tenbri.toml
 ```
@@ -523,7 +523,7 @@ jobs:
           python-version: "3.12"
       - name: Install tenbri
         run: |
-          cargo install tenbri-cli --version 0.1.0-beta.3 --locked
+          cargo install tenbri-cli --version 0.1.0-beta.5 --locked
           pip install --pre tenbri pytest
       - name: Check tenbri.toml
         run: tenbri schema check --schema tenbri.toml
@@ -548,7 +548,7 @@ jobs:
           node-version: 24
       - name: Install tenbri
         run: |
-          cargo install tenbri-cli --version 0.1.0-beta.3 --locked
+          cargo install tenbri-cli --version 0.1.0-beta.5 --locked
           npm ci
       - name: Check tenbri.toml
         run: tenbri schema check --schema tenbri.toml
@@ -557,7 +557,7 @@ jobs:
 ```
 
 <Callout type="info">
-`--version 0.1.0-beta.3` installs the newest `0.1.0` pre-release; pin an exact version once
+`--version 0.1.0-beta.5` installs the newest `0.1.0` pre-release; pin an exact version once
 you depend on its output. The commands in each job were run locally; the workflow files
 themselves were not run on GitHub.
 </Callout>
