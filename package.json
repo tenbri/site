@@ -5,9 +5,10 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "build": "astro build",
+    "build": "astro build && pnpm check:dashes",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "check:dashes": "echo 'Checking for em and en dashes (not allowed on this site)' && ! grep -rnE '—|–' src dist README.md --include='*.astro' --include='*.md' --include='*.mdx' --include='*.ts' --include='*.css' --include='*.html' --include='*.xml'"
   },
   "dependencies": {
     "@astrojs/rss": "^4.0.19",

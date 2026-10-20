@@ -32,7 +32,7 @@
 	--sl-color-black: #ffffff;
 }
 
-/* Layout: a calmer, modern docs frame — no heavy borders, a quiet sidebar, a narrower reading column. */
+/* Layout: a calmer, modern docs frame: no heavy borders, a quiet sidebar, a narrower reading column. */
 :root {
 	--sl-nav-height: 3.75rem;
 	--sl-content-width: 46rem;
