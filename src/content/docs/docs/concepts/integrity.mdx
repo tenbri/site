@@ -215,7 +215,13 @@ order, stopping at the first failure:
 Then it checks HEAD. If the stream has checkpoints, it also checks the stream against its own
 latest one. A revocation that reaches back is reported at the earliest entry it invalidates.
 
-`--key` takes the fingerprint (`sha256:…`) or the public key (`ed25519:…`) of the genesis key.
+`--key` takes the fingerprint (`sha256:…`) or the public key (`ed25519:…`) of the genesis key. On
+the machine that created the stream with `tenbri init`, `--key` can be left out: `init` recorded
+the fingerprint in the keys directory's `pins` file, and `verify` uses it and says so
+(`(the pin recorded in <keys>/pins)`). An auditor on another machine has no such record and still
+pins with `--key`; without either, `verify` exits 3 and prints the exact `--key` command, with the
+fingerprint read from the stream for you to compare with the one you were given
+([CLI reference](/docs/reference/cli/#pins)).
 
 The bindings and `tenbrid` run the same checks:
 
@@ -268,10 +274,10 @@ genesis key.
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Verified against the pinned key (and the checkpoint, if given) |
+| `0` | Verified against the pinned key, from `--key` or the pin `tenbri init` recorded (and the checkpoint, if given) |
 | `1` | The stream does not verify, or does not match the `--checkpoint` given. The first broken sequence number and the error code are printed |
 | `2` | Any other error: a missing stream, a bad `--key`, a malformed checkpoint file |
-| `3` | No `--key`: the stream agrees with its own genesis key, which proves nothing about who wrote it |
+| `3` | No `--key` and no pin recorded by `tenbri init` on this machine: the stream agrees with its own genesis key, which proves nothing about who wrote it |
 
 A failure looks like this:
 
@@ -358,4 +364,4 @@ Anything after a checkpoint's size, including truncation back to exactly that si
 covered by it; a later checkpoint held outside the operator moves the line.
 
 A checkpoint adds to the pinned key; it does not replace it. `verify --checkpoint` without `--key`
-still exits 3.
+or a recorded pin still exits 3.

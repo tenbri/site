@@ -89,24 +89,26 @@ const features = [
 		title: 'Anyone can check it, offline',
 		body: 'Hand an auditor the stream and one fingerprint. Verification checks canonical bytes, the hash chain, every Ed25519 signature and every key, with no access to your systems. A checkpoint they kept catches truncation and forks.',
 		link: ['How integrity works', '/docs/concepts/integrity/'],
-		file: { name: 'terminal', lang: 'shellsession', code: `$ tenbri verify ./audit/support --key sha256:9c1e…
-verified 1204 entries, stream tnb1:1702…b7d8, pinned to sha256:9c1e…
+		file: { name: 'terminal', lang: 'shellsession', code: `$ tenbri verify
+verified 8 entries, stream tnb1:986d8e32…3588, pinned to sha256:986d8e32… (the pin recorded in ~/demo/keys/pins)
 
-$ tenbri verify ./audit/support --key sha256:9c1e…   # after a one-byte edit
-broken at seq 3: bad_signature
-2 entries verified before it, stream tnb1:1702…b7d8` },
+$ tenbri verify    # after someone edits one batch on disk
+broken at seq 5: bad_signature: the signature does not verify
+4 entries verified before it, stream tnb1:986d8e32…3588
+
+$ tenbri verify audit/support --key sha256:986d8e32…   # an auditor on another machine pins it` },
 	},
 	{
 		badge: 'Query',
 		title: 'Every decision made under the old rule',
 		body: 'Inputs are pinned by reference, version and keyed digest. When a policy changes, list what was decided under the previous version and review it. Each answer is re-checked against storage before it is returned.',
 		link: ['Review a policy change', '/docs/examples/policy-change-review/'],
-		file: { name: 'terminal', lang: 'shellsession', code: `$ tenbri query ./audit/support --input policy:refund@14 \\
-    | jq -c '{seq, action: .entry.action.type, target: .entry.action.target}'
-{"seq":2,"action":"issue_refund","target":"stripe:ch_81f2"}
-{"seq":5,"action":"issue_refund","target":"stripe:ch_93aa"}
+		file: { name: 'terminal', lang: 'shellsession', code: `$ tenbri query --rule policy:refund@14
+3  2026-10-20T16:49:42.442Z  decision intent  agent:support  issue_refund stripe:ch_3PqX  -  verified
+5  2026-10-20T16:49:42.485Z  decision intent  agent:support  issue_refund stripe:ch_9ZzY  -  verified
+7  2026-10-20T16:49:42.525Z  decision intent  agent:support  issue_refund stripe:ch_0     -  verified
 
-$ tenbri tail ./audit/support -n 20   # follow decisions as agents write them` },
+$ tenbri query --rule policy:refund@14 --json | jq .entry.action   # JSON when piped` },
 	},
 	{
 		badge: 'Schemas',
@@ -175,12 +177,14 @@ const frameworks = [
 
 // The recorded session: real output from the quickstart run, hashes shortened.
 const session = [
-	{ chapter: 'Record', note: 'refund.py decorates a refund function with @tenbri.decision and calls it three times', cmd: 'export TENBRI_STREAM=audit/support TENBRI_AGENT=agent:support' },
-	{ cmd: 'python refund.py', out: 'pin this: sha256:18c44ddc…f94edc\nok: re_123\nrefused: over the 500 EUR ceiling\nerror: nothing to refund' },
-	{ chapter: 'Read', note: 'each call wrote an intent before it ran, then its outcome', cmd: `tenbri tail audit/support -n 6 --no-follow | jq -r '[.seq, .phase, .status // "-", .action.target] | @tsv'`, out: '3   intent    -         stripe:ch_3PqX\n4   outcome   ok        stripe:ch_3PqX\n5   intent    -         stripe:ch_9ZzY\n6   outcome   refused   stripe:ch_9ZzY\n7   intent    -         stripe:ch_0\n8   outcome   error     stripe:ch_0' },
-	{ chapter: 'Verify', note: 'anyone can check it offline, against the pinned key', cmd: 'tenbri verify audit/support --key sha256:18c44ddc…', out: 'verified 8 entries, stream tnb1:18c44ddc…7b00, pinned to sha256:18c44ddc…' },
-	{ chapter: 'Tamper', note: 'someone edits one refund on disk', cmd: "sed -i '' 's/ch_3PqX/ch_3PqZ/' audit/support/batches/000000000003.jsonl" },
-	{ chapter: 'Caught', note: 'the first changed entry fails verification', cmd: 'tenbri verify audit/support --key sha256:18c44ddc…', out: 'broken at seq 3: bad_signature: the signature does not verify\n2 entries verified before it, stream tnb1:18c44ddc…7b00' },
+	{ chapter: 'Record', note: 'create a stream; the CLI records its fingerprint on this machine', cmd: 'export TENBRI_STREAM=audit/support TENBRI_AGENT=agent:support' },
+	{ cmd: 'tenbri init', out: 'created stream tnb1:986d8e32f69cb7b19e170a65792a3588 at audit/support\nstream key fingerprint (pin it): sha256:986d8e32…cd52f52\npinned in ~/demo/keys/pins: tenbri verify audit/support uses it' },
+	{ note: 'refund.py decorates a refund function with @tenbri.decision and calls it three times', cmd: 'python refund.py', out: 'ok: re_123\nrefused: over the 500 EUR ceiling\nerror: nothing to refund' },
+	{ chapter: 'Read', note: 'each call wrote an intent before it ran, then its outcome', cmd: 'tenbri tail -n 6 --no-follow', out: '3  2026-10-20T16:49:42.442Z  decision intent   agent:support  issue_refund stripe:ch_3PqX  -        verified\n4  2026-10-20T16:49:42.464Z  decision outcome  agent:support  issue_refund stripe:ch_3PqX  ok       verified\n5  2026-10-20T16:49:42.485Z  decision intent   agent:support  issue_refund stripe:ch_9ZzY  -        verified\n6  2026-10-20T16:49:42.504Z  decision outcome  agent:support  issue_refund stripe:ch_9ZzY  refused  verified\n7  2026-10-20T16:49:42.525Z  decision intent   agent:support  issue_refund stripe:ch_0     -        verified\n8  2026-10-20T16:49:42.546Z  decision outcome  agent:support  issue_refund stripe:ch_0     error    verified' },
+	{ cmd: 'tenbri show 4', out: 'seq 4  decision outcome  01M5D3G0HWD934QDJNSR0230F8\n  action       issue_refund stripe:ch_3PqX\n  intent       01M5D3G0H716Y40JZR8KTCSXXY\n  principal    agent:support\n  status       ok\n  verification verified, pinned to sha256:986d8e32… (recorded in ~/demo/keys/pins)' },
+	{ chapter: 'Verify', note: 'checks every hash, signature and key against the recorded pin', cmd: 'tenbri verify', out: 'verified 8 entries, stream tnb1:986d8e32…3588, pinned to sha256:986d8e32… (the pin recorded in ~/demo/keys/pins)' },
+	{ chapter: 'Tamper', note: 'someone edits one refund on disk', cmd: "sed -i '' s/ch_9ZzY/ch_9ZzZ/ audit/support/batches/000000000005.jsonl" },
+	{ chapter: 'Caught', note: 'the first changed entry fails verification', cmd: 'tenbri verify', out: 'broken at seq 5: bad_signature: the signature does not verify\n4 entries verified before it, stream tnb1:986d8e32…3588 (the pin recorded in ~/demo/keys/pins)' },
 ];
 
 const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', 'SOC 2', 'ISO/IEC 27001', 'ISO/IEC 42001', 'NIST AI RMF'];
@@ -254,7 +258,7 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 			<div class="wrap section-head center">
 				<p class="eyebrow">See it run</p>
 				<h2 id="demo-title">Record, verify, tamper, get caught</h2>
-				<p class="sub">A refund function decorated with <code>@tenbri.decision</code>, called three times. Then someone edits one byte on disk. This is the real output, with hashes shortened.</p>
+				<p class="sub">A refund function decorated with <code>@tenbri.decision</code>, called three times. Then someone edits one byte on disk. Real output from a run, with hashes and paths shortened.</p>
 			</div>
 			<div class="wrap player">
 				<TerminalPlayer title="tenbri quickstart" steps={session} />
@@ -477,7 +481,7 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	.band.alt { background: var(--paper-2); }
 	.section-head { display: grid; gap: 1rem; }
 	.section-head.center { justify-items: center; text-align: center; }
-	.player { max-width: 60rem; width: 100%; }
+	.player { max-width: 70rem; width: 100%; }
 	.fw { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem; }
 	.fw a {
 		padding: 0.55rem 0.95rem;

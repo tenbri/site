@@ -217,9 +217,13 @@ tenbri tail ./audit -n 2 --no-follow
 ```
 
 ```text
-{"action":{"target":"stripe:ch_1","type":"issue_refund"},"durability":"local","ext":{"langchain":{"run_id":"01a15a14-268e-7184-85da-706077931b7c","tool_call_id":"call_1"}},"id":"01M5D189MXPWD8YFTD905M485F","inputs":[{"digest":"hmac-sha256:ebf4398c…","ref":"langchain:tool_call/call_1","version":"args"}],"kind":"decision","phase":"intent","prev":"sha256:8b01c989…","principal":{"id":"support","kind":"agent"},"rule":{"ref":"policy:refund","result":"allow","version":"14"},"seq":3,"sig":"ed25519:1c258c09…","signer":"sess:2026-10-20:d665b2aec157","source":"sdk","stream":"tnb1:5ab4e13077d0f33d4d03ec05ce702827","ts":"2026-10-20T16:10:32.480Z","v":1}
-{"action":{"target":"stripe:ch_1","type":"issue_refund"},"id":"01M5D189NHV3YJCTT8853JXCZK","intent":"01M5D189MXPWD8YFTD905M485F","kind":"decision","phase":"outcome","prev":"sha256:90689266…","principal":{"id":"support","kind":"agent"},"seq":4,"sig":"ed25519:4a261ee2…","signer":"sess:2026-10-20:d665b2aec157","source":"sdk","status":"ok","stream":"tnb1:5ab4e13077d0f33d4d03ec05ce702827","ts":"2026-10-20T16:10:32.500Z","v":1}
+     3  2026-10-20T16:10:32.480Z  decision intent   agent:support            issue_refund stripe:ch_1         -        unpinned
+     4  2026-10-20T16:10:32.500Z  decision outcome  agent:support            issue_refund stripe:ch_1         ok       unpinned
 ```
+
+`unpinned`: `init()` records no pin for the CLI, so `tail` cannot check the stream against
+your fingerprint until you pass it with `--key`, as `verify` does next. Piped, `tail` prints each
+entry as JSON.
 
 ```sh
 tenbri verify ./audit --key sha256:5ab4e130…   # your full fingerprint
@@ -538,8 +542,10 @@ by hand as in [any other framework](/docs/adapters/planned/#use-tenbri-from-any-
 ## Read back and verify
 
 Anyone with read access to the stream and its fingerprint can check it; no keys needed. Pin the
-fingerprint you got at creation: without one, `tenbri verify` only reports `consistent` and
-`NOT pinned: this only shows the stream agrees with its own genesis key`.
+fingerprint you got at creation. `init()` records no pin for the CLI (only `tenbri init` does), so
+without `--key`, `tenbri verify` only reports `consistent` and
+`NOT pinned: this only shows the stream agrees with its own genesis key`, exits 3, and prints the
+`tenbri verify ./audit --key sha256:…` command to run once you have checked the fingerprint.
 
 <Tabs syncKey="lang">
 <TabItem label="CLI">

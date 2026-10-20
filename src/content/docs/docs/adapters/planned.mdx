@@ -208,6 +208,7 @@ JSON
 created stream tnb1:6ea0f69406b84005a960755dd3cfd8e8 at ./audit
 stream key fingerprint (pin it): sha256:6ea0f69406b84005a960755dd3cfd8e8e2c8352d0a4de17430173e60bdcea2b4
 keys: ./keys/tnb1-6ea0f69406b84005a960755dd3cfd8e8
+pinned in ./keys/pins: tenbri verify ./audit uses it
 verify with: tenbri verify ./audit --key sha256:6ea0f69406b84005a960755dd3cfd8e8e2c8352d0a4de17430173e60bdcea2b4
 refunded ch_123
 {"action":{"target":"stripe:ch_123","type":"issue_refund"},"id":"01M5D1BJNTJZWCDWZ0E8WS5QHV","intent":"01M5D1BJBSKW9AH2H7S8S8D9FK","kind":"decision","phase":"outcome","prev":"sha256:4d38ec8d…","principal":{"id":"support","kind":"agent"},"seq":4,"sig":"ed25519:298c779b…","signer":"sess:2026-10-20:8439598040cf","source":"sdk","status":"ok","stream":"tnb1:6ea0f69406b84005a960755dd3cfd8e8","ts":"2026-10-20T16:12:20.026Z","v":1}
@@ -262,8 +263,10 @@ the same key again returns the original entry with `"replayed":true`.
 </TabItem>
 </Tabs>
 
-Then read the stream back with `tenbri tail`, `tenbri verify --key`, or the bindings' `query` and
-`verify`, as on any adapter page. See [Streams and entries](/docs/concepts/streams-and-entries/)
+Then read the stream back with `tenbri tail`, `tenbri show` and `tenbri verify`, or the bindings'
+`query` and `verify`, as on any adapter page. On the machine that ran `tenbri init`, `verify` uses
+the pin it recorded and needs no `--key`; anywhere else, and for a stream `init()` created, pass
+`--key`. See [Streams and entries](/docs/concepts/streams-and-entries/)
 for the fields and the [entry format](/docs/reference/entry-format/) for the exact draft shape.
 
 <LinkCard

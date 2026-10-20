@@ -294,9 +294,10 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    <Tabs syncKey="lang">
    <TabItem label="CLI">
 
-   `query` prints one JSON object per line: the entry, its `seq`, its entry `hash`, its
+   Piped, `query` prints one JSON object per line: the entry, its `seq`, its entry `hash`, its
    `verification`, and `as_of` (what the answer is current to). With `--key`, every row is checked
-   against the pinned fingerprint: without a query index, `query` verifies the whole stream.
+   against the pinned fingerprint (JSON output never uses the pin `tenbri init` recorded): without
+   a query index, `query` verifies the whole stream.
 
    ```sh
    tenbri query audit/support --input policy:refund@14 --key $PIN \

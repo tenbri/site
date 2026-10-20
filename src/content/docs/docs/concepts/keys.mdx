@@ -37,6 +37,8 @@ tenbri init audit/support
 ```text
 created stream tnb1:5db31441baa2d080326d9f6c83c95319 at audit/support
 stream key fingerprint (pin it): sha256:5db31441baa2d080326d9f6c83c95319c6e64dd5c33a49257cc54d231cc36484
+...
+pinned in <keys>/pins: tenbri verify audit/support uses it
 ```
 
 </TabItem>
@@ -76,11 +78,37 @@ Pass it to `--key`, as a fingerprint or as the public key:
 tenbri verify audit/support --key sha256:5db31441baa2d080326d9f6c83c95319c6e64dd5c33a49257cc54d231cc36484
 ```
 
-If the genesis key differs, verification fails at seq 1 with `untrusted_root`. Without `--key`,
-`verify` exits 3 and says the stream is not pinned. `query`, `tail`, `receipt create` and
-`receipt verify`, `tenbrid` (the `key` setting of a stream) and the Python and TypeScript SDKs
+If the genesis key differs, verification fails at seq 1 with `untrusted_root`. `query`, `show`,
+`tail`, `receipt create` and `receipt verify`, `tenbrid` (the `key` setting of a stream) and the Python and TypeScript SDKs
 (the `key` option of `init()` and `Tenbri.open`, or the argument of `verify`) take the same pin
 ([SDK reference](/docs/reference/sdk/#tenbriopen)).
+
+### Recorded pins
+
+`tenbri init` appends `<location> <fingerprint>` for each stream it creates to `pins` in the keys
+directory, one line per stream, like ssh's `known_hosts`. The location is the stream directory's
+absolute path or the object-store URL as given. On that machine, `tenbri verify`, `tenbri show`
+and the terminal output of `tenbri query` and `tenbri tail` use it when `--key` is absent, and
+`verify` says so:
+
+```sh
+tenbri verify audit/support
+```
+
+```text
+verified 4 entries, stream tnb1:5db31441baa2d080326d9f6c83c95319, pinned to sha256:5db31441… (the pin recorded in /…/keys/pins)
+```
+
+The pins file sits next to the secret keys, so it is exactly as trustworthy as the machine that
+made the stream: convenient for its operator, worthless to anyone checking that operator. An
+auditor on another machine, CI, or anyone handed a copy still pins with `--key`, using a
+fingerprint they hold themselves. Without `--key` and without a recorded pin, `verify` exits 3,
+says the stream is not pinned, and prints the genesis key it found with the exact command,
+`tenbri verify <stream> --key sha256:…`. It never pins for you: run that command only once you
+have compared the fingerprint with the one the stream's owner gave you.
+
+`init()` in Python and TypeScript, the Rust `Writer` and `tenbrid` record no pin. See
+[Pins](/docs/reference/cli/#pins) in the CLI reference.
 
 Store the fingerprint where the stream's operator cannot change it: in the auditor's own records,
 in your verifier's configuration, in a contract.

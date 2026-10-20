@@ -136,6 +136,7 @@ cargo install tenbri-server --version 0.1.0-beta.2 --locked
    created stream tnb1:04abaaf0fc12080fe179a5064159b672 at audit/support
    stream key fingerprint (pin it): sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de
    keys: ./keys/tnb1-04abaaf0fc12080fe179a5064159b672
+   pinned in ./keys/pins: tenbri verify audit/support uses it
    verify with: tenbri verify audit/support --key sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de
    indexed 4 entries of tnb1:04abaaf0fc12080fe179a5064159b672 (sqlite) at …/tenbri/index/tnb1-04abaaf0fc12080fe179a5064159b672
    ```
@@ -149,10 +150,21 @@ cargo install tenbri-server --version 0.1.0-beta.2 --locked
    export PIN=sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de
    ```
 
+   From here on you are the auditor, on another machine. `tenbri init` recorded the pin in the
+   operator's `./keys/pins`, which you do not have. Stand in for your machine with a keys
+   directory of your own:
+
+   ```sh
+   export TENBRI_KEYS=./auditor-keys
+   ```
+
 2. **Verify without a pin, then with it.**
 
    The fingerprint is your trust root. Without it, verification can only say the stream agrees
-   with its own genesis key, which anyone who rewrites the whole stream can also produce. The
+   with its own genesis key, which anyone who rewrites the whole stream can also produce. With no
+   recorded pin on your machine, the CLI never pins for you: it exits 3 and prints the genesis
+   key it read from the stream and the exact command to pin it. Run that command only if the
+   fingerprint matches the one the operator sent you; here, use `$PIN`. The
    Python and TypeScript scripts below exit with the CLI's codes: 0 verified, 1 broken, 3 not
    pinned.
 
@@ -167,6 +179,8 @@ cargo install tenbri-server --version 0.1.0-beta.2 --locked
    ```text
    consistent: 4 entries, stream tnb1:04abaaf0fc12080fe179a5064159b672
    NOT pinned: this only shows the stream agrees with its own genesis key; pass --key <fingerprint>
+   its genesis key is sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de; if the stream's owner gave you that fingerprint, pin it:
+     tenbri verify audit/support --key sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de
    exit 3
    verified 4 entries, stream tnb1:04abaaf0fc12080fe179a5064159b672, pinned to sha256:04abaaf0fc12080fe179a5064159b6722f6495c868f36dde83920d263b3fe6de
    exit 0
@@ -294,11 +308,11 @@ cargo install tenbri-server --version 0.1.0-beta.2 --locked
 
 3. **Keep a checkpoint.**
 
-   A checkpoint is a signed note of the stream's size and Merkle root. The operator seals one;
-   you keep a copy outside the operator's reach.
+   A checkpoint is a signed note of the stream's size and Merkle root. The operator seals one
+   with their keys; you keep a copy outside the operator's reach.
 
    ```sh
-   tenbri checkpoint audit/support
+   TENBRI_KEYS=./keys tenbri checkpoint audit/support
    cp audit/support/checkpoints/000000000004.note seen.note
    head -3 seen.note
    ```
@@ -317,7 +331,7 @@ cargo install tenbri-server --version 0.1.0-beta.2 --locked
    <TabItem label="CLI">
 
    Next time, verify against the checkpoint you kept. The stream must still hold exactly the
-   entries it covers:
+   entries it covers. A checkpoint does not replace `--key`: without it, this still exits 3.
 
    ```sh
    tenbri verify audit/support --key $PIN --checkpoint seen.note; echo "exit $?"

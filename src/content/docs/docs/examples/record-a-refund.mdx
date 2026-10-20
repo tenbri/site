@@ -132,13 +132,15 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```text
-   created stream tnb1:4282909ee7474c3eeeb243ba852f77da at audit/support
-   stream key fingerprint (pin it): sha256:4282909ee7474c3eeeb243ba852f77da5b1f10dc68e6a83c4b6b26ada3749123
-   keys: ./keys/tnb1-4282909ee7474c3eeeb243ba852f77da
-   verify with: tenbri verify audit/support --key sha256:4282909ee7474c3eeeb243ba852f77da5b1f10dc68e6a83c4b6b26ada3749123
+   created stream tnb1:8c356644867656415b19906e2528f4b2 at audit/support
+   stream key fingerprint (pin it): sha256:8c356644867656415b19906e2528f4b261e594f9b85164b5e22ff74cbbd12f9d
+   keys: ./keys/tnb1-8c356644867656415b19906e2528f4b2
+   pinned in ./keys/pins: tenbri verify audit/support uses it
+   verify with: tenbri verify audit/support --key sha256:8c356644867656415b19906e2528f4b261e594f9b85164b5e22ff74cbbd12f9d
    ```
 
-   `init` writes two key entries (seq 1 and 2): the stream key and the first session key.
+   `init` writes two key entries (seq 1 and 2): the stream key and the first session key. It also
+   records the fingerprint in `./keys/pins`, so `tenbri verify` on this machine needs no `--key`.
    `tenbri append` reads a draft on stdin and prints the entry as stored.
 
    ```sh
@@ -171,7 +173,7 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```text
-   {"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"approval":{"by":{"id":"alice","kind":"person"},"entry":"sha256:2cd7ac6d…"},"id":"01M5CWDKWVDZDN2HEZRAJZAF96","inputs":[{"digest":"hmac-sha256:100d69e9…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent","prev":"sha256:2cd7ac6d…","principal":{"id":"support-assistant","kind":"agent"},"rule":{"ref":"rule:refund-under-100","result":"allow","version":"3"},"seq":4,"sig":"ed25519:a8b663a6…","signer":"sess:2026-10-20:63214e562e83","source":"sdk","stream":"tnb1:4282909ee7474c3eeeb243ba852f77da","ts":"2026-10-20T14:46:03.931Z","v":1}
+   {"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"approval":{"by":{"id":"alice","kind":"person"},"entry":"sha256:784f5e7a…"},"id":"01M5D3J7EBSK1NCZXDYBVBAVNE","inputs":[{"digest":"hmac-sha256:100d69e9…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent","prev":"sha256:784f5e7a…","principal":{"id":"support-assistant","kind":"agent"},"rule":{"ref":"rule:refund-under-100","result":"allow","version":"3"},"seq":4,"sig":"ed25519:0df9aedf…","signer":"sess:2026-10-20:80abf05d8816","source":"sdk","stream":"tnb1:8c356644867656415b19906e2528f4b2","ts":"2026-10-20T16:50:55.051Z","v":1}
    ```
 
    Run the refund, then record the outcome:
@@ -192,7 +194,7 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    ```
 
    ```text
-   {"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01M5CWDKXS5350P7C6Z68AH64F","intent":"01M5CWDKWVDZDN2HEZRAJZAF96","kind":"decision","phase":"outcome","prev":"sha256:ace27fa3…","principal":{"id":"support-assistant","kind":"agent"},"seq":5,"sig":"ed25519:9f617ebc…","signer":"sess:2026-10-20:63214e562e83","source":"sdk","status":"ok","stream":"tnb1:4282909ee7474c3eeeb243ba852f77da","ts":"2026-10-20T14:46:03.961Z","v":1}
+   {"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01M5D3J7F5YPGC7846E6YYQCEE","intent":"01M5D3J7EBSK1NCZXDYBVBAVNE","kind":"decision","phase":"outcome","prev":"sha256:d66d6353…","principal":{"id":"support-assistant","kind":"agent"},"seq":5,"sig":"ed25519:0fd26589…","signer":"sess:2026-10-20:80abf05d8816","source":"sdk","status":"ok","stream":"tnb1:8c356644867656415b19906e2528f4b2","ts":"2026-10-20T16:50:55.077Z","v":1}
    ```
 
    </TabItem>
@@ -359,6 +361,7 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
    created stream tnb1:72fd273c29ebab40a1a41b462fd93a48 at audit/support
    stream key fingerprint (pin it): sha256:72fd273c29ebab40a1a41b462fd93a48ccf0433701074b1166efa6d370bdd7b1
    keys: ./keys/tnb1-72fd273c29ebab40a1a41b462fd93a48
+   pinned in ./keys/pins: tenbri verify audit/support uses it
    verify with: tenbri verify audit/support --key sha256:72fd273c29ebab40a1a41b462fd93a48ccf0433701074b1166efa6d370bdd7b1
    token (give it to the client; it is not stored): tnbt_1245d7ba…
 
@@ -469,23 +472,60 @@ export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
 
    Without a query index, `query` reads and verifies the whole stream, so each row is
    `verified`. With one (`tenbri index rebuild`), rows are `indexed`: each is checked against the
-   batch in storage that holds it, and a batch edited on disk fails the query with exit 1.
+   batch in storage that holds it, and a batch edited on disk fails the query with exit 1. On this
+   machine, `init` recorded the pin, so neither command needs `--key`:
 
    ```sh
-   PIN=sha256:4282909ee7474c3eeeb243ba852f77da5b1f10dc68e6a83c4b6b26ada3749123
+   tenbri query audit/support --action issue_refund
+   tenbri verify audit/support
+   ```
+
+   ```text
+        3  2026-10-20T16:50:54.997Z  approval          person:alice             issue_refund stripe:charge/ch_3PqX -        verified
+        4  2026-10-20T16:50:55.051Z  decision intent   agent:support-assistant  issue_refund stripe:charge/ch_3PqX -        verified
+        5  2026-10-20T16:50:55.077Z  decision outcome  agent:support-assistant  issue_refund stripe:charge/ch_3PqX ok       verified
+   verified 5 entries, stream tnb1:8c356644867656415b19906e2528f4b2, pinned to sha256:8c356644867656415b19906e2528f4b261e594f9b85164b5e22ff74cbbd12f9d (the pin recorded in ./keys/pins)
+   ```
+
+   `tenbri show` prints one entry with the entries it is linked to. For the intent, that is the
+   approval it cites and its outcome:
+
+   ```sh
+   tenbri show audit/support 4
+   ```
+
+   ```text
+   seq 4  decision intent  01M5D3J7EBSK1NCZXDYBVBAVNE
+     ts           2026-10-20T16:50:55.051Z
+     hash         sha256:d66d63538a81dee9d3cc34dffc25100546c63d8e537525476fec5329d60c475d
+     action       issue_refund stripe:charge/ch_3PqX
+     approval     {"by":{"id":"alice","kind":"person"},"entry":"sha256:784f5e7a24affdb7d273f0414034249f194c6a053da0066729025e016390fdf6"}
+     inputs       [{"digest":"hmac-sha256:100d69e9c08449fc44312548262ade65ca9aeed0d8e84e32eff2a8a39dbc40ad","ref":"policy:refund","version":"14"}]
+     principal    agent:support-assistant
+     rule         {"ref":"rule:refund-under-100","result":"allow","version":"3"}
+     signer       sess:2026-10-20:80abf05d8816
+     source       sdk
+     verification verified, pinned to sha256:8c356644867656415b19906e2528f4b261e594f9b85164b5e22ff74cbbd12f9d (recorded in ./keys/pins)
+
+   chain:
+         3  2026-10-20T16:50:54.997Z  approval          person:alice             issue_refund stripe:charge/ch_3PqX -        verified
+   >     4  2026-10-20T16:50:55.051Z  decision intent   agent:support-assistant  issue_refund stripe:charge/ch_3PqX -        verified
+         5  2026-10-20T16:50:55.077Z  decision outcome  agent:support-assistant  issue_refund stripe:charge/ch_3PqX ok       verified
+   ```
+
+   Piped, `query` prints JSON for `jq`. JSON output uses only `--key`, so scripts pass the pin:
+
+   ```sh
+   PIN=sha256:8c356644867656415b19906e2528f4b261e594f9b85164b5e22ff74cbbd12f9d
    tenbri query audit/support --action issue_refund --key $PIN \
      | jq -c '{verification, seq, kind: .entry.kind, phase: .entry.phase, status: .entry.status, approved_by: .entry.approval.by.id}'
-   tenbri verify audit/support --key $PIN
    ```
 
    ```text
    {"verification":"verified","seq":3,"kind":"approval","phase":null,"status":null,"approved_by":null}
    {"verification":"verified","seq":4,"kind":"decision","phase":"intent","status":null,"approved_by":"alice"}
    {"verification":"verified","seq":5,"kind":"decision","phase":"outcome","status":"ok","approved_by":null}
-   verified 5 entries, stream tnb1:4282909ee7474c3eeeb243ba852f77da, pinned to sha256:4282909ee7474c3eeeb243ba852f77da5b1f10dc68e6a83c4b6b26ada3749123
    ```
-
-   `tenbri tail audit/support -n 3 --no-follow` prints the same entries as stored.
 
    </TabItem>
    <TabItem label="Python">

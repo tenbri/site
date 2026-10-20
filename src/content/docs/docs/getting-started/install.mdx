@@ -31,8 +31,10 @@ written from Python verifies with `tenbri verify`, and the other way round.
 
 ## The CLI
 
-The CLI is the `tenbri` binary: `init`, `append`, `verify`, `query`, `tail`, `checkpoint`,
-`receipt`, `keys`, `erase`, `index` and `schema check`.
+The CLI is the `tenbri` binary: `init`, `append`, `verify`, `query`, `show`, `tail`,
+`checkpoint`, `receipt`, `keys`, `erase`, `index` and `schema check`. On a terminal, `query` and
+`tail` print one line per entry; piped, they print JSON. Every command that takes a stream reads
+it from `TENBRI_STREAM` when you leave it out.
 
 <Tabs>
 <TabItem label="cargo">
@@ -414,6 +416,11 @@ Each stream gets its own subdirectory, named after the stream id with `:` writte
 (`tnb1-5db31441baa2d080326d9f6c83c95319`). Directories are created mode `0700` and key files
 `0600` on Unix. Without the stream's keys, a stream opens read-only: verify and query work, writes
 fail.
+
+`tenbri init` also appends the new stream's location and fingerprint to `pins` in the keys
+directory, so `tenbri verify <stream>` on the same machine needs no `--key`. Streams created
+another way, and every other machine, need `--key`
+([CLI reference](/docs/reference/cli/#pins)).
 
 The keys directory and a local stream directory must not contain each other: `tenbri init` refuses
 that layout. Whoever can read or copy the log must not be able to sign as it. See
