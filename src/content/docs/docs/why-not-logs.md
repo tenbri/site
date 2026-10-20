@@ -1,0 +1,23 @@
+---
+title: Why not just logs?
+description: How Tenbri differs from application logs and observability tools.
+sidebar:
+  order: 2
+---
+
+Logs tell operators what happened. Tenbri gives anyone, including someone who does not trust the
+operator, proof of what an agent decided and why.
+
+| | Application logs | Tenbri |
+|---|---|---|
+| Integrity | Editable, rotated, deleted | Hash-chained and signed; any change fails verification |
+| Who acted | A shared service account | The specific agent, person or service, with its own key |
+| What it saw | Free text, if anything | Inputs pinned by reference, version and content hash |
+| Why it was allowed | Rarely recorded | The rule or grant that allowed or refused it |
+| Human oversight | A Slack thread, if anything | The approval, as its own signed entry |
+| Timing | After the fact | The intent before the action, the outcome after |
+| Sharing with an auditor | Give them access to your systems | A receipt that verifies on its own, offline |
+| Personal data | Copied into log lines | Only hashes in the chain; bodies encrypted and erasable |
+
+Tenbri does not replace logs, traces or observability tools: it records decisions and links to the
+trace that produced them (OpenTelemetry trace and span ids).

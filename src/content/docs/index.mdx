@@ -1,0 +1,50 @@
+---
+title: Tenbri
+description: Audit trail for AI agents. Every decision signed, chained and provable.
+template: splash
+hero:
+  tagline: Audit trail for AI agents. Every decision signed, chained and provable, on storage you control.
+  image:
+    file: ../../assets/mascot.webp
+    alt: Tenbri's mascot, a pangolin detective holding a magnifying glass
+  actions:
+    - text: Read the docs
+      link: /docs/introduction/
+      icon: right-arrow
+    - text: Star on GitHub
+      link: https://github.com/tenbri/tenbri
+      icon: github
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Logs say what happened. Tenbri proves it.
+
+<CardGrid stagger>
+	<Card title="Tamper-evident" icon="seti:lock">
+		Every entry is hash-chained and signed. Change one byte and verification fails.
+	</Card>
+	<Card title="Who, why, from what" icon="magnifier">
+		The agent that acted, the rule and policy version that allowed it, and the inputs it saw,
+		pinned by content hash.
+	</Card>
+	<Card title="Humans in the loop" icon="approve-check">
+		Approvals and overrides are their own signed entries, not a Slack thread.
+	</Card>
+	<Card title="Your storage" icon="seti:folder">
+		Plain files on local disk, S3, Cloudflare R2 or MinIO. No hosted service, no telemetry.
+	</Card>
+	<Card title="Receipts auditors verify offline" icon="document">
+		Share proof without sharing access to your systems.
+	</Card>
+	<Card title="Any agent stack" icon="puzzle">
+		Rust today; Python, Node and a WASM verifier next. A `tenbri` CLI and the `tenbrid` REST and gRPC API.
+	</Card>
+</CardGrid>
+
+## Open source, Apache-2.0
+
+Written in Rust. The format spec and test vectors live in the
+[repository](https://github.com/tenbri/tenbri/tree/main/spec). Read the
+[blog](/blog/) for how it's built.
