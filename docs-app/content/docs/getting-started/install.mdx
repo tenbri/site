@@ -5,7 +5,7 @@ description: "Install the tenbri CLI, the tenbrid server, the Python and Node pa
 
 
 <Callout type="warn" title="Pre-release">
-The latest release is `0.1.0-beta.2`. Nothing is ready for production yet. Records written by
+The latest release is `0.1.0-beta.3`. Nothing is ready for production yet. Records written by
 pre-releases are not covered by the format promise: the format stays provisional until its
 external cryptography review ends. Every registry holds pre-releases on its pre-release channel,
 so each command below names it: `--version` for cargo, `--pre` for pip, `@next` for npm.
@@ -40,7 +40,7 @@ Needs Rust 1.85 or later. The crate is `tenbri-cli`; the binary it installs is `
 Pre-releases only install when you name the version:
 
 ```sh
-cargo install tenbri-cli --version 0.1.0-beta.2
+cargo install tenbri-cli --version 0.1.0-beta.3
 ```
 
 </Tab>
@@ -51,7 +51,7 @@ macOS x86_64 and arm64, and Windows x86_64, with a `SHA256SUMS` file, an SBOM an
 build-provenance attestation. On macOS (Apple silicon):
 
 ```sh
-VERSION=0.1.0-beta.2
+VERSION=0.1.0-beta.3
 TARGET=aarch64-apple-darwin   # or x86_64-apple-darwin, x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
 curl -fLO "https://github.com/tenbri/tenbri/releases/download/v$VERSION/tenbri-$VERSION-$TARGET.tar.gz"
 tar -xzf "tenbri-$VERSION-$TARGET.tar.gz"
@@ -68,7 +68,7 @@ Windows takes `tenbri-$VERSION-x86_64-pc-windows-msvc.zip`. To check where an ar
 `tenbri`; `tenbrid` is next to it in `/usr/local/bin`. Pre-releases get their exact tag only:
 
 ```sh
-docker run --rm ghcr.io/tenbri/tenbri:0.1.0-beta.2 --version
+docker run --rm ghcr.io/tenbri/tenbri:0.1.0-beta.3 --version
 ```
 
 </Tab>
@@ -95,7 +95,7 @@ tenbri --version
 ```
 
 ```text
-tenbri 0.1.0-beta.2
+tenbri 0.1.0-beta.3
 ```
 
 ### Cargo features
@@ -110,7 +110,7 @@ The CLI turns on two features by default:
 To build without the keychain:
 
 ```sh
-cargo install tenbri-cli --version 0.1.0-beta.2 --no-default-features --features s3
+cargo install tenbri-cli --version 0.1.0-beta.3 --no-default-features --features s3
 ```
 
 Object stores take their credentials from the environment, as the providers' own tools read them:
@@ -131,7 +131,7 @@ release binaries and the container above include it. With cargo, it comes from t
 `tenbri-server` crate:
 
 ```sh
-cargo install tenbri-server --version 0.1.0-beta.2
+cargo install tenbri-server --version 0.1.0-beta.3
 ```
 
 From a checkout, `cargo build -p tenbri-server --release` builds `target/release/tenbrid`.
@@ -200,7 +200,7 @@ python -c "import tenbri; print(tenbri.__version__)"
 ```
 
 ```text
-0.1.0-beta.2
+0.1.0-beta.3
 ```
 
 `tenbri.init()` opens the process's default stream and `@tenbri.decision` records each call of a
@@ -242,7 +242,7 @@ node -e "console.log(require('tenbri').version)"
 ```
 
 ```text
-0.1.0-beta.2
+0.1.0-beta.3
 ```
 
 `init()` opens the process's default stream and `decision({...}, fn)` records each call of `fn`
@@ -269,7 +269,7 @@ It creates the stream and its keys on first use, and flushes and closes the stre
 keys and `tenbri-store` local and object storage:
 
 ```sh
-cargo add tenbri-core@0.1.0-beta.2 tenbri-keys@0.1.0-beta.2 tenbri-store@0.1.0-beta.2 tenbri-writer@0.1.0-beta.2
+cargo add tenbri-core@0.1.0-beta.3 tenbri-keys@0.1.0-beta.3 tenbri-store@0.1.0-beta.3 tenbri-writer@0.1.0-beta.3
 cargo add tokio --features macros,rt
 ```
 

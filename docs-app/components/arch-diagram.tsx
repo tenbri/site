@@ -145,7 +145,7 @@ export function ArchDiagram({ wide = false }: { wide?: boolean }) {
 					they reach storage; signing keys never live with the stream.
 				</p>
 				<p className="src">
-					Status as of 0.1.0-beta.2. Source: the <a href="https://github.com/tenbri/tenbri#status">Tenbri roadmap</a>.
+					Status as of 0.1.0-beta.3. Source: the <a href="https://github.com/tenbri/tenbri#status">Tenbri roadmap</a>.
 				</p>
 			</figcaption>
 		</figure>
