@@ -1,0 +1,86 @@
+---
+title: Planned adapters
+description: The agent frameworks Tenbri plans adapters for, and how to record decisions from any framework until then.
+sidebar:
+  order: 3
+---
+
+import { LinkCard } from '@astrojs/starlight/components';
+
+The Tenbri README lists the adapters planned for v0.1.0. None of the others is on `main` yet.
+
+| Adapter | Planned as |
+| --- | --- |
+| Claude Agent SDK | Stable ([on `main`, unreleased](/docs/adapters/claude-agent-sdk/)) |
+| OpenAI Agents SDK | Stable ([on `main`, unreleased](/docs/adapters/openai-agents/)) |
+| LangGraph and LangChain | Stable |
+| Pydantic AI | Experimental |
+| Vercel AI SDK | Experimental |
+| Mastra | Experimental |
+| Google ADK | Experimental |
+| AWS Strands | Experimental |
+| Microsoft Agent Framework | Experimental |
+| CrewAI | Experimental |
+| LlamaIndex | Experimental |
+| A2A | Experimental |
+
+**Stable** means covered by the format promise and the 0.x API policy. **Experimental** means
+documented and tested, but free to change in a 0.x minor release.
+
+## Record from any framework today
+
+An adapter only automates what you can do by hand: write an intent before the agent acts, then the
+outcome after. Until your framework has an adapter, call Tenbri from the place where your agent
+runs its tools (a tool wrapper, a middleware, a callback). Keep the same mapping the adapters use:
+
+1. Before the tool runs, append an **intent**: `principal` is the agent, `action.type` the tool,
+   `action.target` what it acts on. Do not run the tool if the write fails.
+2. After it runs, append the **outcome** for that intent: `ok`, `error`, or `refused` if a person or
+   a rule stopped it.
+3. If a person approved the call, append an **approval** first and name it from the decision.
+
+See [Streams and entries](/docs/concepts/streams-and-entries/) for the fields and the
+[entry format](/docs/reference/entry-format/) for the exact draft shape. Three ways to write:
+
+### tenbrid over REST
+
+Run `tenbrid` next to your agent and `POST` intents and outcomes to
+`/v1/streams/{stream}/intents` and `/v1/streams/{stream}/outcomes` with a bearer token. This works
+from any language, and the server checks action schemas.
+
+<LinkCard
+  title="tenbrid over REST"
+  href="/docs/examples/tenbrid-rest/"
+  description="Start tenbrid, write an intent and its outcome with curl, retry safely, list, tail and verify."
+/>
+
+The [tenbrid API reference](/docs/reference/api/) lists every endpoint.
+
+### The CLI
+
+For scripts and shell-driven agents, pipe a draft entry to `tenbri append`, which prints the entry
+as stored:
+
+```sh
+tenbri append ./audit/support < intent.json
+```
+
+See the [CLI reference](/docs/reference/cli/) and the [examples](/docs/examples/).
+
+### The Rust writer
+
+If your agent is a Rust program, embed `tenbri-writer` and write entries in process, without the
+CLI or a server.
+
+<LinkCard
+  title="Write from Rust"
+  href="/docs/examples/rust-writer/"
+  description="Create a stream, record an intent and its outcome, and verify, from a Rust program."
+/>
+
+Install the released `tenbri` and `tenbrid` binaries from [Install](/docs/getting-started/install/).
+
+The Python and Node bindings the adapters are built on are also on `main` only: the `tenbri`
+`0.1.0-alpha.2` packages on PyPI and npm predate their API. Built from source as on the
+[Claude Agent SDK page](/docs/adapters/claude-agent-sdk/#install-from-source), they give you the
+same `intent`, `outcome` and `append` calls the adapters use, to write your own.

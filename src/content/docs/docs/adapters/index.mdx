@@ -1,0 +1,74 @@
+---
+title: Adapters
+description: Adapters record an agent framework's tool calls, approvals and handoffs as signed Tenbri decisions, with one line at agent setup.
+sidebar:
+  order: 0
+---
+
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<Aside type="caution" title="Unreleased">
+The adapters are on the `main` branch of the Tenbri repository but are not released yet: they are
+not on PyPI or npm, and the latest release (`0.1.0-alpha.2`) does not include them. They also need
+the Python and Node bindings from `main`: the `tenbri` `0.1.0-alpha.2` packages on PyPI and npm do
+not have the API the adapters use. Install both from source for now; each adapter page gives
+the exact commands. Names, options and recorded fields can still change before they ship.
+</Aside>
+
+An adapter plugs into an agent framework's own hooks and writes what the agent does into a Tenbri
+stream. You open a stream with the Python or Node binding, hand it to the adapter, and run your
+agent as before. Each tool call becomes a decision: an **intent** that is durable before the tool
+runs, then an **outcome** once it has run. See
+[Streams and entries](/docs/concepts/streams-and-entries/) for the entry kinds.
+
+## What gets recorded
+
+Every adapter follows the same mapping:
+
+| Agent event | Tenbri entry |
+| --- | --- |
+| A tool call is about to run | An `intent` decision. `principal` is the agent, `action.type` is the tool name (or a name you map it to), `action.target` comes from the tool's arguments when you say how. |
+| The tool returned | The `outcome` with status `ok` |
+| The tool raised or failed | The `outcome` with status `error` |
+| A person or a rule denied the call | The `outcome` with status `refused` |
+| The run was interrupted mid-tool, or the process died | `unknown`: from the adapter on interrupt, or from the next writer that reconciles the open intent |
+| A person approved the call | An `approval` entry by that person; the decision names it in its `approval` member ([approvals](/docs/concepts/streams-and-entries/#approvals)) |
+| A handoff to another agent (OpenAI Agents SDK) | An `intent` and an `ok` outcome, action `handoff`, target `agent:<next agent>` |
+
+What the adapters never write: prompts, tool arguments and tool results. When the stream is opened
+with a digest key, an adapter can pin a tool input or a document the agent read by its keyed digest
+(an entry in `inputs`), so whoever holds the content and the key can prove what the agent used.
+Entries also carry the active trace id when there is one, so a decision and its trace find each
+other.
+
+Adapters **fail closed** by default: if the intent cannot be written, the tool does not run. Each
+adapter has a fail-open switch that lets the tool run unrecorded, with a warning.
+
+## Available adapters
+
+| Framework | Python package | npm package | Status |
+| --- | --- | --- | --- |
+| Claude Agent SDK | `tenbri-claude-agent-sdk` | `@tenbri/claude-agent-sdk` | On `main`, unreleased |
+| OpenAI Agents SDK | `tenbri-openai-agents` | `@tenbri/openai-agents` | On `main`, unreleased |
+
+Both are tested in CI against the framework's current and previous release, with no model and no
+API key: the Claude adapter drives the real SDK against a stand-in for the Claude Code CLI, and the
+OpenAI adapter runs the real SDK with a scripted model.
+
+<CardGrid>
+  <LinkCard
+    title="Claude Agent SDK"
+    href="/docs/adapters/claude-agent-sdk/"
+    description="TenbriHooks: PreToolUse, PostToolUse and can_use_tool become intents, outcomes and approvals. Python and TypeScript."
+  />
+  <LinkCard
+    title="OpenAI Agents SDK"
+    href="/docs/adapters/openai-agents/"
+    description="TenbriRecorder: tool calls, guardrail refusals, handoffs and approvals. Python and TypeScript."
+  />
+  <LinkCard
+    title="Planned adapters"
+    href="/docs/adapters/planned/"
+    description="LangGraph, Pydantic AI, Vercel AI SDK and more, and how to record from any framework today."
+  />
+</CardGrid>

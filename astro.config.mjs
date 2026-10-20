@@ -19,6 +19,7 @@ export default defineConfig({
 				{ label: 'Start here', items: ['docs/introduction', 'docs/why-not-logs', { autogenerate: { directory: 'docs/getting-started' } }] },
 				{ label: 'Concepts', items: [{ autogenerate: { directory: 'docs/concepts' } }] },
 				{ label: 'Examples', items: [{ autogenerate: { directory: 'docs/examples' } }] },
+				{ label: 'Adapters', items: [{ autogenerate: { directory: 'docs/adapters' } }] },
 				{ label: 'Reference', items: [{ autogenerate: { directory: 'docs/reference' } }] },
 			],
 		}),
