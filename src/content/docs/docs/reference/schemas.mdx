@@ -1,0 +1,155 @@
+---
+title: Action schemas
+description: The tenbri.toml format, how entries are checked against it, and the output of tenbri schema check.
+sidebar:
+  order: 4
+---
+
+An action schema says what an entry for one action type must carry: the inputs it read, a rule, an
+approval, a durability tier, a target pattern, and any other member by its dotted path
+(`rule.result`, `ext.refund.amount`) with a type and allowed values.
+
+Schemas live in `tenbri.toml`. `tenbrid` checks every append against them, and
+`tenbri schema check` checks the file and existing streams. `tenbri append` does not check them.
+
+## Example
+
+```toml
+# An action type no [actions.*] table declares: "reject" (the default) or "warn".
+unknown_actions = "reject"
+
+[actions.issue_refund]
+inputs = ["policy:refund"]        # refs the entry's inputs must include
+rule = true                       # a rule is required
+approval = true                   # an approval is required
+durability = "replicated"         # the tier the entry must carry
+target = "stripe:charge/*"        # `*` matches any run of characters
+
+[actions.issue_refund.fields."rule.result"]
+allowed = ["allow"]
+
+[actions.issue_refund.fields."ext.refund.amount"]
+required = true
+type = "integer"
+```
+
+## Top-level keys
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `unknown_actions` | `"reject"` or `"warn"` | `"reject"` | What to do with an action type no `[actions.*]` table declares |
+| `actions` | table of tables | empty | One `[actions.<type>]` table per action type; `<type>` is the entry's `action.type` and cannot be empty |
+
+## `[actions.<type>]`
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `description` | string | none | Free text |
+| `inputs` | array of strings | `[]` | Refs the entry's `inputs` must include (any version) |
+| `rule` | boolean | `false` | A `rule` is required |
+| `approval` | boolean | `false` | An `approval` is required |
+| `durability` | `"local"`, `"replicated"` or `"postgres"` | none | The entry's `durability` must be this tier |
+| `target` | string pattern | none | `action.target` must be present and match |
+| `fields` | table | empty | Rules for any member, keyed by dotted path |
+
+`rule`, `approval`, `durability` and `target` are shorthands for field rules on `rule`,
+`approval`, `durability` and `action.target`.
+
+## `[actions.<type>.fields."<path>"]`
+
+The path is a dotted path into the entry. Its first segment must be a top-level member of format
+v1 ([Entry format](/docs/reference/entry-format/)), and no segment may be empty.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `required` | boolean | `false` | The member must be present |
+| `type` | `"string"`, `"integer"`, `"boolean"`, `"object"` or `"array"` | none | The member's JSON type |
+| `allowed` | array | `[]` | The value must be one of these |
+| `pattern` | string | none | A string value must match; `*` matches any run of characters (none included) |
+
+Patterns have one wildcard, `*`. Everything else matches literally: `stripe:charge/*` matches
+`stripe:charge/ch_1`, not `stripe:refund/1`.
+
+## Validating the file
+
+Loading `tenbri.toml` fails, before any entry is read, on:
+
+- an unknown key at any level (`unknown_action`, `input`, `rul`);
+- an `unknown_actions` or `durability` value outside the lists above;
+- an empty action type: `an action type cannot be empty`;
+- a field path outside the entry or with an empty segment:
+  ``actions.<type>: fields."<path>": not a member of a format v1 entry``;
+- an `allowed` value of another type than `type`:
+  ``actions.<type>: fields."<path>": allowed value <v> is not of its type``;
+- a `pattern` with a `type` other than `"string"`:
+  ``actions.<type>: fields."<path>": a pattern needs type "string"``.
+
+Errors are prefixed with the file's path.
+
+## What is checked
+
+- Entries without an `action` (notes, key events) have nothing to check.
+- Every entry naming an action must use a declared action type. With `unknown_actions = "reject"`
+  an undeclared type is a violation on `action.type`; with `"warn"` it is a warning and the entry is
+  written.
+- The requirements (`inputs`, `rule`, `approval`, `durability`, `target`, `fields`) apply to
+  intents only (`kind: decision`, `phase: intent`), which state the decision before the action
+  runs. Outcomes, approvals, notes and ingested decisions are checked for a declared action type
+  only.
+
+### Violations
+
+Each violation has a `path` (the member as a dotted path) and a `message`:
+
+| Path | Message | When |
+| --- | --- | --- |
+| `action.type` | `` `<type>` is not declared in tenbri.toml `` | Undeclared type, `unknown_actions = "reject"` |
+| `inputs` | `` an input with ref `<ref>` is required `` | A ref from `inputs` is missing |
+| any | `required` | A required member is absent |
+| any | `expected a string`, `an integer`, `a boolean`, `an object`, `an array` | Wrong type |
+| any | `<value> is not one of <allowed, comma separated>` | Value not in `allowed` (also `durability`) |
+| any | `` <value> does not match `<pattern>` `` | Pattern mismatch (also `target`) |
+
+With `unknown_actions = "warn"`, the warning text is `` `<type>` is not declared in tenbri.toml ``.
+
+## tenbri schema check
+
+```text
+tenbri schema check [PATHS]... [--schema FILE]
+```
+
+`--schema` defaults to `tenbri.toml`. `PATHS` are streams: directories or `s3://` / `r2://` URLs.
+With no path, only the file is checked.
+
+Output:
+
+```text
+<FILE>: <n> action schemas, unknown actions rejected
+<PATH> seq <seq>: warning: <warning>
+<PATH> seq <seq>: <path>: <message>
+<PATH>: <k> entries, <b> break their schema
+```
+
+The first line says `warned about` instead of `rejected` with `unknown_actions = "warn"`. One
+`warning` or violation line per finding, then one summary line per stream.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | The file is valid and no entry breaks its schema (warnings allowed) |
+| `1` | At least one entry breaks its action's schema, or a stream does not verify |
+| `2` | The file is missing or invalid, or a stream cannot be opened |
+
+Example, after adding `rule = true` to `[actions.reply_ticket]` for a stream with an intent at
+seq 3 and no rule:
+
+```text
+audit/support seq 3: rule: required
+audit/support: 3 entries, 1 break their schema
+```
+
+## In tenbrid
+
+`tenbrid` loads the file named by `schema` in its configuration (or `TENBRI_SCHEMA`); with none,
+nothing is checked. An append with violations fails with `TENBRI_SCHEMA_VIOLATION` (422) and a
+`violations` array of `{path, message}`; nothing is written. Warnings come back in the response's
+`warnings`. `GET /v1/schemas` returns the file as JSON. See [API](/docs/reference/api/).

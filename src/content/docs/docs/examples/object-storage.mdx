@@ -1,0 +1,153 @@
+---
+title: Streams on object storage
+description: Keep a stream in AWS S3, Cloudflare R2 or MinIO instead of a local directory.
+sidebar:
+  order: 6
+---
+
+A stream can live under a bucket prefix instead of a local directory. Every command that takes a
+stream path also takes `s3://bucket/<prefix>` or `r2://bucket/<prefix>`, with credentials from the
+same environment variables the providers' own tools read. You will run a stream on a local MinIO
+end to end, then see the variables and commands for AWS S3 and Cloudflare R2.
+
+**Prerequisites:** the `tenbri` CLI ([install](/docs/getting-started/install/)), built with its
+default `s3` feature, and Docker for the MinIO part.
+
+:::note[What was tested]
+The MinIO steps below were run for real. The AWS S3 and R2 commands were not run for this page:
+S3 support is tested on MinIO only until real S3 joins the test matrix before `0.1.0-beta.1`.
+:::
+
+Keys never go to the bucket: they stay in `$TENBRI_KEYS` on the machine that writes.
+
+## MinIO (tested)
+
+### 1. Start MinIO and create a bucket
+
+```sh
+docker run -d --rm --name minio -p 9000:9000 \
+  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+  cgr.dev/chainguard/minio:latest server /data
+
+curl -s -o /dev/null -w "%{http_code}\n" -X PUT \
+  --user minioadmin:minioadmin --aws-sigv4 "aws:amz:us-east-1:s3" \
+  http://127.0.0.1:9000/audit-bucket
+```
+
+```text
+200
+```
+
+Any way of creating the bucket works (`mc mb`, the MinIO console); `curl --aws-sigv4` just avoids
+another tool.
+
+### 2. Point tenbri at it
+
+MinIO speaks the S3 API, so use `s3://` with `AWS_ENDPOINT_URL`. `AWS_ALLOW_HTTP=true` is needed
+for a plain `http://` endpoint.
+
+```sh
+export AWS_ACCESS_KEY_ID=minioadmin
+export AWS_SECRET_ACCESS_KEY=minioadmin
+export AWS_REGION=us-east-1
+export AWS_ENDPOINT_URL=http://127.0.0.1:9000
+export AWS_ALLOW_HTTP=true
+export TENBRI_KEYS=./keys
+```
+
+### 3. Create the stream, append and verify
+
+```sh
+tenbri init s3://audit-bucket/audit/billing
+```
+
+```text
+created stream tnb1:f46c23bc8a90f03b2924debbb193a729 at s3://audit-bucket/audit/billing
+stream key fingerprint (pin it): sha256:f46c23bc8a90f03b2924debbb193a729bba2d17ea0f55585e683f81171d40237
+keys: ./keys/tnb1-f46c23bc8a90f03b2924debbb193a729
+verify with: tenbri verify s3://audit-bucket/audit/billing --key sha256:f46c23bc8a90f03b2924debbb193a729bba2d17ea0f55585e683f81171d40237
+```
+
+```sh
+echo '{"kind":"decision","phase":"intent","source":"sdk","principal":{"kind":"agent","id":"billing-agent"},"action":{"type":"issue_refund","target":"stripe:charge/ch_3PqX"}}' \
+  | tenbri append s3://audit-bucket/audit/billing
+```
+
+```text
+{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01M5CTAGF3TS7CZXW2E4V3CF1B","kind":"decision","phase":"intent","prev":"sha256:80033c88…","principal":{"id":"billing-agent","kind":"agent"},"seq":3,"sig":"ed25519:ed26a4c8…","signer":"sess:2026-10-20:46c372fdd933","source":"sdk","stream":"tnb1:f46c23bc8a90f03b2924debbb193a729","ts":"2026-10-20T14:09:24.963Z","v":1}
+```
+
+```sh
+tenbri verify s3://audit-bucket/audit/billing \
+  --key sha256:f46c23bc8a90f03b2924debbb193a729bba2d17ea0f55585e683f81171d40237
+```
+
+```text
+verified 3 entries, stream tnb1:f46c23bc8a90f03b2924debbb193a729, pinned to sha256:f46c23bc8a90f03b2924debbb193a729bba2d17ea0f55585e683f81171d40237
+```
+
+The prefix holds the same layout as a local stream:
+
+```text
+audit/billing/HEAD
+audit/billing/batches/000000000001.jsonl
+audit/billing/batches/000000000002.jsonl
+audit/billing/batches/000000000003.jsonl
+```
+
+`init` refuses a prefix that already holds a stream:
+
+```sh
+tenbri init s3://audit-bucket/audit/billing
+```
+
+```text
+tenbri: s3://audit-bucket/audit/billing already holds a stream
+```
+
+## AWS S3 (not run here)
+
+Leave out `AWS_ENDPOINT_URL` and `AWS_ALLOW_HTTP`; the other `AWS_*` variables work as usual.
+
+```sh
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_REGION=eu-west-1
+export TENBRI_KEYS=~/.config/tenbri/keys
+
+tenbri init s3://my-audit-bucket/audit/billing
+tenbri verify s3://my-audit-bucket/audit/billing --key sha256:...
+```
+
+## Cloudflare R2 (not run here)
+
+Use `r2://` with an R2 API token's key pair. `tenbri` derives the endpoint from
+`CLOUDFLARE_ACCOUNT_ID` (`https://<account>.r2.cloudflarestorage.com`), or takes
+`AWS_ENDPOINT_URL` if you set it. The region is always `auto`.
+
+```sh
+export AWS_ACCESS_KEY_ID=...        # R2 API token access key id
+export AWS_SECRET_ACCESS_KEY=...    # R2 API token secret
+export CLOUDFLARE_ACCOUNT_ID=...
+export TENBRI_KEYS=~/.config/tenbri/keys
+
+tenbri init r2://my-audit-bucket/audit/billing
+tenbri verify r2://my-audit-bucket/audit/billing --key sha256:...
+```
+
+Without `CLOUDFLARE_ACCOUNT_ID` or `AWS_ENDPOINT_URL`, `tenbri` stops before any request (this
+output is real):
+
+```text
+tenbri: r2://audit-bucket/audit/billing: set CLOUDFLARE_ACCOUNT_ID (or AWS_ENDPOINT_URL) for R2
+```
+
+## What happened
+
+`tenbri` wrote the same batches and HEAD to the bucket that it writes to a local directory. Before
+using a bucket it runs a canary: a put-if-absent must succeed once and be refused the second time,
+and a compare-and-swap from a wrong ETag must fail; a store that cannot do this is refused. Those
+two operations are what fence concurrent writers, so no lock or lease is needed.
+
+Related: [Storage reference](/docs/reference/storage/) · [Streams and entries](/docs/concepts/streams-and-entries/) ·
+[Keys](/docs/concepts/keys/) · [CLI reference](/docs/reference/cli/)

@@ -1,0 +1,204 @@
+---
+title: Quickstart
+description: Create a stream on a local directory, record an intent and its outcome, then verify, query and tail it.
+sidebar:
+  order: 2
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This walkthrough uses the `tenbri` CLI on a local directory. It takes about five minutes. You need
+the CLI installed ([Install](/docs/getting-started/install/)).
+
+The outputs below come from a real run of `tenbri 0.1.0-alpha.2` on macOS. Your ids, keys, hashes,
+signatures and timestamps will differ. Long values are shortened with `…`.
+
+<Steps>
+
+1. **Pick a keys directory.**
+
+   Keep it outside the stream. For this walkthrough, use a `keys` directory next to it:
+
+   ```sh
+   mkdir tenbri-demo && cd tenbri-demo
+   export TENBRI_KEYS=$PWD/keys
+   ```
+
+   Without `TENBRI_KEYS` or `--keys`, the CLI uses `~/.config/tenbri/keys`.
+
+2. **Create a stream.**
+
+   ```sh
+   tenbri init audit/support
+   ```
+
+   ```text
+   created stream tnb1:5db31441baa2d080326d9f6c83c95319 at audit/support
+   stream key fingerprint (pin it): sha256:5db31441baa2d080326d9f6c83c95319c6e64dd5c33a49257cc54d231cc36484
+   keys: /…/tenbri-demo/keys/tnb1-5db31441baa2d080326d9f6c83c95319
+   verify with: tenbri verify audit/support --key sha256:5db31441baa2d080326d9f6c83c95319c6e64dd5c33a49257cc54d231cc36484
+   ```
+
+   `init` creates a stream key and a session key, and writes two entries: the genesis entry
+   (the stream key certifying itself) and the certification of the session key. The directory
+   must be new or empty.
+
+   Copy the fingerprint somewhere the operator of the stream cannot change it. It is your trust
+   root: [verification](/docs/concepts/integrity/) checks the stream against it. The stream id is
+   `tnb1:` and the first 32 hex digits of that fingerprint.
+
+3. **Record an intent.**
+
+   `tenbri append` reads one entry as JSON on stdin. An intent is written before the action
+   runs:
+
+   ```sh
+   tenbri append audit/support <<'EOF'
+   {"kind":"decision","phase":"intent","source":"sdk",
+    "principal":{"kind":"agent","id":"support-assistant"},
+    "action":{"type":"refund","target":"order:8812"},
+    "inputs":[{"ref":"policy:refund","version":"14",
+               "digest":"hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa"}],
+    "rule":{"ref":"refund.max_amount","version":"14","result":"allow"}}
+   EOF
+   ```
+
+   It prints the entry as stored, in canonical form (one line, keys sorted):
+
+   ```json
+   {"action":{"target":"order:8812","type":"refund"},"id":"01M5CT5F8MAR3WK1DPV59R5JQQ","inputs":[{"digest":"hmac-sha256:9f2c41aa…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent","prev":"sha256:e9c6ae14…","principal":{"id":"support-assistant","kind":"agent"},"rule":{"ref":"refund.max_amount","result":"allow","version":"14"},"seq":3,"sig":"ed25519:2e766aa1…","signer":"sess:2026-10-20:db131c41f8ad","source":"sdk","stream":"tnb1:5db31441baa2d080326d9f6c83c95319","ts":"2026-10-20T14:06:39.892Z","v":1}
+   ```
+
+   The writer fills in `v`, `id`, `stream`, `seq`, `ts`, `prev`, `signer` and `sig`. You may
+   give `id` and `ts` yourself; giving `v`, `stream`, `seq`, `prev`, `signer` or `sig` is an
+   error:
+
+   ```text
+   tenbri: stdin: invalid_field: `seq` is filled in by the writer
+   ```
+
+   Note the entry's `id`. The outcome names it.
+
+4. **Record its outcome.**
+
+   The outcome names its intent in the `intent` field and carries a `status`:
+
+   ```sh
+   tenbri append audit/support <<'EOF'
+   {"kind":"decision","phase":"outcome","source":"sdk",
+    "intent":"01M5CT5F8MAR3WK1DPV59R5JQQ","status":"ok",
+    "principal":{"kind":"agent","id":"support-assistant"},
+    "action":{"type":"refund","target":"order:8812"}}
+   EOF
+   ```
+
+   ```json
+   {"action":{"target":"order:8812","type":"refund"},"id":"01M5CT5QT1QZM21QPQ849GAB0H","intent":"01M5CT5F8MAR3WK1DPV59R5JQQ","kind":"decision","phase":"outcome","prev":"sha256:19a2970d…","principal":{"id":"support-assistant","kind":"agent"},"seq":4,"sig":"ed25519:f3aa53e3…","signer":"sess:2026-10-20:db131c41f8ad","source":"sdk","status":"ok","stream":"tnb1:5db31441baa2d080326d9f6c83c95319","ts":"2026-10-20T14:06:48.641Z","v":1}
+   ```
+
+   An intent takes exactly one outcome. Appending a second one for the same intent fails and
+   writes nothing:
+
+   ```text
+   tenbri: entry rejected: bad_intent: no open intent 01M5CT5F8MAR3WK1DPV59R5JQQ
+   ```
+
+5. **Verify against the pinned key.**
+
+   ```sh
+   tenbri verify audit/support --key sha256:5db31441baa2d080326d9f6c83c95319c6e64dd5c33a49257cc54d231cc36484
+   ```
+
+   ```text
+   verified 4 entries, stream tnb1:5db31441baa2d080326d9f6c83c95319, pinned to sha256:5db31441baa2d080326d9f6c83c95319c6e64dd5c33a49257cc54d231cc36484
+   ```
+
+   The exit code is 0. Without `--key`, `verify` can only say the stream agrees with its own
+   genesis key, and exits 3:
+
+   ```text
+   consistent: 4 entries, stream tnb1:5db31441baa2d080326d9f6c83c95319
+   NOT pinned: this only shows the stream agrees with its own genesis key; pass --key <fingerprint>
+   ```
+
+6. **Query by input or action.**
+
+   Find every entry that used version 14 of the refund policy:
+
+   ```sh
+   tenbri query audit/support --input policy:refund@14 --key sha256:5db31441…
+   ```
+
+   ```json
+   {"verification":"verified","entry":{"action":{"target":"order:8812","type":"refund"},"id":"01M5CT5F8MAR3WK1DPV59R5JQQ","inputs":[{"digest":"hmac-sha256:9f2c41aa…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent",…,"seq":3,…}}
+   ```
+
+   Each line is one JSON object: the entry, and `verification`, which is `verified` with
+   `--key` and `unpinned` without it. `--action refund` selects by action type and matches
+   both entries here. Repeat `--input` to require several inputs.
+
+7. **Tail the stream.**
+
+   ```sh
+   tenbri tail audit/support -n 2 --no-follow
+   ```
+
+   ```json
+   {"action":{"target":"order:8812","type":"refund"},"id":"01M5CT5F8MAR3WK1DPV59R5JQQ",…,"phase":"intent",…,"seq":3,…}
+   {"action":{"target":"order:8812","type":"refund"},"id":"01M5CT5QT1QZM21QPQ849GAB0H","intent":"01M5CT5F8MAR3WK1DPV59R5JQQ",…,"phase":"outcome",…,"seq":4,…}
+   ```
+
+   `-n` sets how many existing entries to print first (default 10). Without `--no-follow`,
+   `tail` keeps running and prints new entries as they are written.
+
+</Steps>
+
+## See tampering fail
+
+Change one byte of entry 3 in a copy of the stream, then verify the copy:
+
+```sh
+cp -r audit/support tampered
+sed -i.bak 's/order:8812/order:8813/' tampered/batches/000000000003.jsonl
+rm tampered/batches/*.bak
+tenbri verify tampered --key sha256:5db31441…
+```
+
+```text
+broken at seq 3: bad_signature: the signature does not verify
+2 entries verified before it, stream tnb1:5db31441baa2d080326d9f6c83c95319
+```
+
+The exit code is 1. `query` on a stream that does not verify also exits 1.
+
+## What is on disk
+
+```text
+tenbri-demo/
+  audit/support/
+    .lock                 held while HEAD is swapped; not part of the stream
+    HEAD
+    batches/000000000001.jsonl
+    batches/000000000002.jsonl
+    batches/000000000003.jsonl
+    batches/000000000004.jsonl
+  keys/tnb1-5db31441baa2d080326d9f6c83c95319/
+    5db31441baa2.json     the stream key's public description
+    5db31441baa2.secret   its secret (0600)
+    db131c41f8ad.json     the session key's public description
+    db131c41f8ad.secret
+```
+
+Each CLI call writes its own batch file. `HEAD` names the latest entry and is signed by the
+session key.
+
+<Aside type="tip">
+A long-running writer (the Rust `Writer`, or `tenbrid`) groups many entries into one batch, and
+writes [checkpoints](/docs/concepts/integrity/#checkpoints).
+</Aside>
+
+## Next
+
+- [Streams and entries](/docs/concepts/streams-and-entries/): every field you can set.
+- [Integrity](/docs/concepts/integrity/): what `verify` checks.
+- [CLI reference](/docs/reference/cli/) and [error codes](/docs/reference/errors/).

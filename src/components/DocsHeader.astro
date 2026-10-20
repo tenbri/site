@@ -3,12 +3,15 @@
 import Search from '@astrojs/starlight/components/Search.astro';
 import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
 import ThemeSelect from '@astrojs/starlight/components/ThemeSelect.astro';
+
+const examples = Astro.url.pathname.startsWith('/docs/examples');
 ---
 
 <div class="hdr">
 	<SiteTitle />
 	<nav class="links sl-hidden md:sl-flex" aria-label="Main">
-		<a href="/docs/introduction/" aria-current="page">Docs</a>
+		<a href="/docs/introduction/" aria-current={examples ? undefined : 'page'}>Docs</a>
+		<a href="/docs/examples/" aria-current={examples ? 'page' : undefined}>Examples</a>
 		<a href="/blog/">Blog</a>
 		<a href="https://github.com/tenbri/tenbri/releases">Releases</a>
 		<a href="https://github.com/tenbri/tenbri">GitHub</a>

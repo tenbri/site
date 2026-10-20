@@ -1,0 +1,162 @@
+---
+title: Verify as an auditor
+description: Pin a stream's fingerprint, keep a checkpoint, and see verification catch a one-byte edit on disk.
+sidebar:
+  order: 2
+---
+
+You are the auditor. The operator gives you the stream's fingerprint through a channel they cannot
+rewrite later (a signed email, a ticket, a contract annex). You verify the stream against it, keep
+a checkpoint, then play the attacker: edit one byte of a batch file on disk and watch `tenbri
+verify` fail with the first broken sequence number and exit code 1.
+
+**Prerequisites:** the `tenbri` CLI ([install](/docs/getting-started/install/)) and `jq`.
+
+## 1. Set up a stream to audit
+
+The operator side: a stream with one intent and its outcome.
+
+```sh
+export TENBRI_KEYS=./keys
+tenbri init audit/support
+INTENT_ID=$(tenbri append audit/support <<'EOF' | jq -r .id
+{"kind":"decision","phase":"intent","source":"sdk",
+ "principal":{"kind":"agent","id":"support-assistant"},
+ "action":{"type":"reply_ticket","target":"zendesk:ticket/4821"}}
+EOF
+)
+tenbri append audit/support <<EOF > /dev/null
+{"kind":"decision","phase":"outcome","source":"sdk","intent":"$INTENT_ID","status":"ok",
+ "principal":{"kind":"agent","id":"support-assistant"},
+ "action":{"type":"reply_ticket","target":"zendesk:ticket/4821"}}
+EOF
+```
+
+```text
+created stream tnb1:c124ed99a66c93f098f7892e962ddba1 at audit/support
+stream key fingerprint (pin it): sha256:c124ed99a66c93f098f7892e962ddba140fe7218aed1496e1dcbb0a009e38706
+keys: ./keys/tnb1-c124ed99a66c93f098f7892e962ddba1
+verify with: tenbri verify audit/support --key sha256:c124ed99a66c93f098f7892e962ddba140fe7218aed1496e1dcbb0a009e38706
+```
+
+## 2. Pin the fingerprint
+
+The fingerprint is your trust root. Without it, `verify` can only say the stream agrees with its
+own genesis key, which anyone who rewrites the whole stream can also produce. It exits 3.
+
+```sh
+tenbri verify audit/support; echo "exit $?"
+```
+
+```text
+consistent: 4 entries, stream tnb1:c124ed99a66c93f098f7892e962ddba1
+NOT pinned: this only shows the stream agrees with its own genesis key; pass --key <fingerprint>
+exit 3
+```
+
+Pass the fingerprint you received with `--key`:
+
+```sh
+PIN=sha256:c124ed99a66c93f098f7892e962ddba140fe7218aed1496e1dcbb0a009e38706
+tenbri verify audit/support --key $PIN; echo "exit $?"
+```
+
+```text
+verified 4 entries, stream tnb1:c124ed99a66c93f098f7892e962ddba1, pinned to sha256:c124ed99a66c93f098f7892e962ddba140fe7218aed1496e1dcbb0a009e38706
+exit 0
+```
+
+## 3. Keep a checkpoint
+
+:::caution[Unreleased]
+`tenbri checkpoint` is on the `main` branch, not in `0.1.0-alpha.2`; build from source to follow this step. In the release, writers seal checkpoints, and `verify --checkpoint` works the same way.
+:::
+
+A checkpoint is a signed note of the stream's size and Merkle root. The operator seals one; you
+keep a copy outside the operator's reach.
+
+```sh
+tenbri checkpoint audit/support
+cp audit/support/checkpoints/000000000004.note seen.note
+head -3 seen.note
+```
+
+```text
+checkpoint at size 4: checkpoints/000000000004.note
+tnb1:c124ed99a66c93f098f7892e962ddba1
+4
+WHteYfOCqQogIrDWQgOYnojIlW4HXh/htZn9Dloi2Ag=
+```
+
+The three lines are the origin (the stream id), the size and the root hash. A blank line and the
+signature line follow.
+
+Next time, verify against the checkpoint you kept. The stream must still hold exactly the entries
+it covers:
+
+```sh
+tenbri verify audit/support --key $PIN --checkpoint seen.note; echo "exit $?"
+```
+
+```text
+matches checkpoint tnb1:c124ed99a66c93f098f7892e962ddba1 at size 4
+matches its latest checkpoint, at size 4
+verified 4 entries, stream tnb1:c124ed99a66c93f098f7892e962ddba1, pinned to sha256:c124ed99a66c93f098f7892e962ddba140fe7218aed1496e1dcbb0a009e38706
+exit 0
+```
+
+## 4. Tamper with one byte
+
+Each batch file holds consecutive entries, one canonical JSON line each. Here every append made its
+own batch, so entry 3 (the intent) is alone in `000000000003.jsonl`.
+
+```sh
+ls audit/support/batches
+```
+
+```text
+000000000001.jsonl
+000000000002.jsonl
+000000000003.jsonl
+000000000004.jsonl
+```
+
+Change the ticket number in the intent from `4821` to `4822`, one byte:
+
+```sh
+perl -pi -e 's#ticket/4821#ticket/4822#' audit/support/batches/000000000003.jsonl
+```
+
+## 5. Verify again
+
+```sh
+tenbri verify audit/support --key $PIN; echo "exit $?"
+```
+
+```text
+broken at seq 3: bad_signature: the signature does not verify
+2 entries verified before it, stream tnb1:c124ed99a66c93f098f7892e962ddba1
+exit 1
+```
+
+Reads refuse a broken stream too:
+
+```sh
+tenbri query audit/support --action reply_ticket --key $PIN; echo "exit $?"
+```
+
+```text
+tenbri: the stream does not verify: broken at seq 3: bad_signature: the signature does not verify
+exit 1
+```
+
+## What happened
+
+The edit changed the bytes the session key signed, so the signature on entry 3 no longer verifies
+and `verify` reports the first broken entry with exit code 1. A stream signed with another genesis
+key fails your pin. An operator who holds the keys could still truncate or re-sign a rewritten
+stream; the checkpoint you kept catches that for the entries it covers (`truncated`, `fork`),
+which a pin alone cannot.
+
+Related: [Integrity](/docs/concepts/integrity/) · [Keys](/docs/concepts/keys/) ·
+[Errors](/docs/reference/errors/) · [CLI reference](/docs/reference/cli/)

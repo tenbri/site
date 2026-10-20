@@ -1,0 +1,355 @@
+---
+title: tenbri CLI
+description: Every tenbri subcommand and flag, what each prints, its exit codes and the environment it reads.
+sidebar:
+  order: 1
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`tenbri` creates streams, appends entries, verifies, queries and follows them, and checks them
+against action schemas. It ships with the `keychain` and `s3` Cargo features on by default.
+
+```text
+tenbri [--keys DIR] <COMMAND>
+```
+
+All output described below goes to stdout. Errors go to stderr as `tenbri: <message>`.
+
+## Global options
+
+| Flag | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `--keys` | `DIR` | `$TENBRI_KEYS`, else `$XDG_CONFIG_HOME/tenbri/keys`, else `~/.config/tenbri/keys` (`%APPDATA%\tenbri\keys` on Windows) | Keys directory. Never inside a stream. |
+| `--help` | | | Print help. |
+| `--version` | | | Print the version. |
+
+Commands that need keys (`init`, `append`, `checkpoint`, `erase`, `keys`) fail with exit code 2 and
+`no keys directory: pass --keys or set TENBRI_KEYS` when no directory can be found.
+
+A stream `PATH` is a local directory (`<root>/<stream>`) or an object-store URL
+(`s3://bucket/<root>/<stream>`, `r2://bucket/<root>/<stream>`). See
+[Storage](/docs/reference/storage/).
+
+A `--key` value is a fingerprint `sha256:<64 hex>` or a public key `ed25519:<64 hex>`; a public key
+is turned into its fingerprint. Anything else fails with
+`--key <value>: expected sha256:<64 hex> or ed25519:<64 hex>` (exit 2).
+
+## init
+
+Create a stream and its stream key; print the fingerprint to pin.
+
+```text
+tenbri init <PATH> [--keychain]
+```
+
+| Argument or flag | Meaning |
+| --- | --- |
+| `PATH` | A directory that does not exist or is empty, or an empty object-store prefix |
+| `--keychain` | Keep the secret keys in the OS keychain (macOS Keychain, Windows Credential Manager) instead of key files. Only with the `keychain` feature. |
+
+`init` writes the genesis entry (the stream key certifying itself) and a session key certification,
+so a new stream holds 2 entries. It fails (exit 2) with `<PATH> is not empty` for a used directory,
+`<PATH> already holds a stream` when a `HEAD` exists, and when the keys directory and the stream
+directory contain each other.
+
+Output:
+
+```text
+created stream <stream id> at <PATH>
+stream key fingerprint (pin it): <sha256:...>
+keys: <key directory>
+verify with: tenbri verify <PATH> --key <sha256:...>
+```
+
+## append
+
+Append one entry, read as JSON on stdin; print it as stored.
+
+```text
+tenbri append <PATH> < entry.json
+```
+
+- The input is a draft: canonicalised, with duplicate keys and non-integers rejected, never
+  repaired. It must not contain the members the writer fills (`v`, `stream`, `seq`, `prev`,
+  `signer`, `sig`); `id` and `ts` may be given. See [Entry format](/docs/reference/entry-format/).
+- Before appending, the writer writes a `reconcile` entry (`status: unknown`) for every intent open
+  longer than 1 hour, except the intent this draft closes.
+- `tenbri append` does not check action schemas; `tenbrid` and `tenbri schema check` do.
+- A draft that does not parse prints `tenbri: stdin: <code>: <detail>`; one the writer refuses
+  prints `tenbri: entry rejected: <code>: <detail>`. Both exit 2; nothing is written.
+
+Output: the stored entry, canonical JSON on one line.
+
+```json
+{"action":{"target":"t:1","type":"reply_ticket"},"id":"...","kind":"decision",...,"v":1}
+```
+
+## verify
+
+Check canonical bytes, chain, signatures and keys against a pinned key.
+
+```text
+tenbri verify <PATH> [--key FINGERPRINT] [--checkpoint FILE]
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--key FINGERPRINT` | Fingerprint (`sha256:...`) or public key (`ed25519:...`) of the stream's genesis key |
+| `--checkpoint FILE` | A checkpoint (C2SP signed note) seen before. The stream must still hold exactly the entries it covers, so truncation and rewrites behind it are caught. |
+
+When the stream has checkpoints of its own, `verify` also checks it against its latest one.
+
+Output, in the order printed:
+
+| Case | Lines | Exit |
+| --- | --- | --- |
+| Stream broken | `broken at seq <n>: <code>: <detail>`, then `<k> entries verified before it, stream <id>` | 1 |
+| `--checkpoint` matches | `matches checkpoint <origin> at size <size>` | continues |
+| `--checkpoint` does not match | `broken at seq <n>: <code>: <detail>`, then `against checkpoint <origin> at size <size>; the stream has <k> entries` | 1 |
+| Stream has its own checkpoint | `matches its latest checkpoint, at size <size>` | continues |
+| Pinned with `--key` | `verified <k> entries, stream <id>, pinned to <fingerprint>` | 0 |
+| No `--key` | `consistent: <k> entries, stream <id>`, then `NOT pinned: this only shows the stream agrees with its own genesis key; pass --key <fingerprint>` | 3 |
+
+A malformed `--checkpoint` file exits 2. A checkpoint does not replace `--key`: without it the exit
+code is still 3. Codes are listed in [Errors](/docs/reference/errors/).
+
+## query
+
+Print entries by input or action, each with its verification status, one JSON per line.
+
+```text
+tenbri query <PATH> [--input REF@VERSION]... [--action TYPE] [--key FINGERPRINT]
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--input REF@VERSION` | An input the entry used, as `ref@version` (`policy:refund@14`). Split at the last `@`. Repeat to require several. |
+| `--action TYPE` | The action type (`reply_ticket`) |
+| `--key FINGERPRINT` | Pin the stream's genesis key |
+
+Every filter given must match. Output, one line per matching entry:
+
+```json
+{"verification":"verified","entry":{...}}
+```
+
+`verification` is `verified` with `--key`, `unpinned` without. If the stream does not verify,
+`query` prints `tenbri: the stream does not verify: broken at seq <n>: ...` and exits 1. A
+malformed `--input` exits 2 with `--input <value>: expected ref@version`.
+
+## tail
+
+Print the last entries, then follow new ones as they are written.
+
+```text
+tenbri tail <PATH> [-n LINES] [--no-follow] [--key FINGERPRINT]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `-n LINES` | `10` | How many existing entries to print first |
+| `--no-follow` | off | Print and exit instead of following |
+| `--key FINGERPRINT` | | Pin the stream's genesis key |
+
+Output: each entry as canonical JSON on one line. While following, `tail` polls the stream every
+500 ms. A stream that stops verifying exits 1.
+
+## checkpoint
+
+:::caution[Unreleased]
+On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
+:::
+
+Seal and sign a checkpoint of the whole stream now; with `--tsa`, timestamp it (RFC 3161).
+
+```text
+tenbri checkpoint <PATH> [--tsa URL]
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--tsa URL` | URL of an RFC 3161 timestamp authority. Its token is stored next to the checkpoint (`anchors/<size>.tsr`) and goes into receipts. |
+
+Output:
+
+```text
+checkpoint at size <n>: checkpoints/<n, 12 digits>.note
+timestamped by <URL>: anchors/<n, 12 digits>.tsr
+```
+
+The second line appears with `--tsa`; if the checkpoint already has a token, it reads
+`already timestamped: anchors/<n, 12 digits>.tsr` instead.
+
+## receipt create
+
+:::caution[Unreleased]
+On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
+:::
+
+Write a receipt for entries of a stream: the entries, the stream's key history, a signed checkpoint
+covering them with their inclusion proofs, and its RFC 3161 token if it has one.
+
+```text
+tenbri receipt create <PATH> --entry SEQ|ID [--entry ...] [--out FILE] [--key FINGERPRINT]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--entry <SEQ or ID>` | required | An entry's sequence number or id; repeat for a receipt proving several |
+| `--out FILE` | stdout | Where to write the receipt |
+| `--key FINGERPRINT` | | Check the stream against this fingerprint while reading it |
+
+Exits 1 with `the stream does not verify: ...` when the stream is broken.
+
+## receipt verify
+
+:::caution[Unreleased]
+On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
+:::
+
+Check a receipt offline against a pinned stream key: no network, no access to the stream.
+
+```text
+tenbri receipt verify <FILE> --key FINGERPRINT [--tsa-roots PEM]
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--key FINGERPRINT` | Required. Fingerprint or public key of the stream's genesis key. |
+| `--tsa-roots PEM` | Root certificates of the timestamp authorities you trust. Without it, RFC 3161 tokens in the receipt are not checked. |
+
+Output when it verifies (exit 0):
+
+```text
+proves seq <n> (<kind> [<phase>]), id <id>, ts <ts> (claimed by the writer)
+in stream <origin>, checkpoint at size <size>, pinned to <fingerprint>; key history: <k> key entries
+timestamped by <tsa> at <time> (RFC 3161): the checkpoint existed then
+```
+
+One `proves` line per entry; one `timestamped` line per token with `--tsa-roots`. Without
+`--tsa-roots`, a receipt with tokens prints
+`<k> RFC 3161 token(s) NOT checked: pass --tsa-roots <pem> to trust a timestamp authority`. A
+receipt that fails prints `receipt does not verify: <reason>` and exits 1.
+
+## schema check
+
+Validate `tenbri.toml`, then every entry of the given streams against it.
+
+```text
+tenbri schema check [PATHS]... [--schema FILE]
+```
+
+| Argument or flag | Default | Meaning |
+| --- | --- | --- |
+| `PATHS` | none | Streams to check: directories or `s3://` / `r2://` URLs |
+| `--schema FILE` | `tenbri.toml` | The schema file |
+
+Output and exit codes are in [Action schemas](/docs/reference/schemas/#tenbri-schema-check).
+
+## erase
+
+:::caution[Unreleased]
+On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
+:::
+
+Delete a subject's data keys, so its bodies and input digests can no longer be read or confirmed,
+and record the erasure in the stream. The chain, checkpoints and receipts still verify.
+
+```text
+tenbri erase <PATH> (--subject HANDLE | --tenant) --reason REASON [--by ID] [--yes]
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--subject HANDLE` | The subject whose data keys to delete |
+| `--tenant` | The tenant's keys, used by entries without a subject |
+| `--reason REASON` | Required. A reference such as the request id (`dsr:2026-1042`), recorded in the erasure note. |
+| `--by ID` | Who asked for it, recorded as the note's principal (a person id) |
+| `--yes` | Do not ask for confirmation |
+
+Exactly one of `--subject` and `--tenant`. Without `--yes`, `erase` asks you to type the handle (or
+`tenant`); anything else exits 2 with `not confirmed; nothing was erased`.
+
+Output: `erased <subject HANDLE | tenant>: <n> data key epochs deleted; erasure recorded at seq <seq>`.
+
+## keys list
+
+:::caution[Unreleased]
+On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
+:::
+
+List the signing keys and the data keys (subjects and key epochs); never a secret.
+
+```text
+tenbri keys list <PATH>
+```
+
+Output:
+
+```text
+signing keys of <stream id> (<key directory>):
+  <key id> <stream|session> <ed25519:...>[ until <not_after>]
+data keys (<data key directory>):
+  <subject HANDLE | tenant>: epochs <first>..<last>, newest made <created>
+```
+
+## keys export
+
+:::caution[Unreleased]
+On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
+:::
+
+Print a subject's data keys as JSON, for a backup kept apart from the log.
+
+```text
+tenbri keys export <PATH> (--subject HANDLE | --tenant) [--digest]
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--digest` | Only the digest keys: enough to confirm input digests, never to open a body |
+
+## keys rotate
+
+:::caution[Unreleased]
+On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
+:::
+
+Start a new data key epoch for a subject and record it in the stream. Older epochs keep opening
+older data until erased.
+
+```text
+tenbri keys rotate <PATH> (--subject HANDLE | --tenant) [--by ID]
+```
+
+Output: `<subject HANDLE | tenant>: new data key epoch <n>, recorded at seq <seq>`.
+
+<Aside type="caution" title="Pre-release">
+`checkpoint`, `receipt`, `erase` and `keys` are on the `main` branch and not in the `0.1.0-alpha.2`
+release. `gc`, `export`, `mcp`, `proxy` and `ingest` are planned and not built.
+</Aside>
+
+## Exit codes
+
+Stable from 0.1.0.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | The stream does not verify, or does not match the `--checkpoint` given (truncated behind it, rewritten, or not signed by the stream); the first broken sequence number is printed. Also: `schema check` found an entry that breaks its action's schema; `receipt verify` found a receipt that does not verify; `query`, `tail` or `receipt create` read a stream that does not verify. |
+| `2` | Any other error, a malformed checkpoint file among them |
+| `3` | `verify` without `--key`: the stream is consistent with its own genesis key, which proves nothing about who wrote it |
+
+## Environment variables
+
+| Variable | Used for |
+| --- | --- |
+| `TENBRI_KEYS` | Keys directory when `--keys` is not given |
+| `XDG_CONFIG_HOME`, `HOME` | Default keys directory (`$XDG_CONFIG_HOME/tenbri/keys`, else `~/.config/tenbri/keys`) |
+| `APPDATA` | Default keys directory on Windows |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` and the other `AWS_*` | Credentials for `s3://` and `r2://` |
+| `AWS_ENDPOINT_URL`, `AWS_ALLOW_HTTP` | S3-compatible endpoint (MinIO); `AWS_ALLOW_HTTP=true` for plain HTTP |
+| `CLOUDFLARE_ACCOUNT_ID` | R2 endpoint, when `AWS_ENDPOINT_URL` is not set |
+
+Details per backend are in [Storage](/docs/reference/storage/).

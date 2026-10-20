@@ -16,7 +16,10 @@ export default defineConfig({
 			lastUpdated: true,
 			components: { Header: './src/components/DocsHeader.astro' },
 			sidebar: [
-				{ label: 'Start here', items: [{ autogenerate: { directory: 'docs' } }] },
+				{ label: 'Start here', items: ['docs/introduction', 'docs/why-not-logs', { autogenerate: { directory: 'docs/getting-started' } }] },
+				{ label: 'Concepts', items: [{ autogenerate: { directory: 'docs/concepts' } }] },
+				{ label: 'Examples', items: [{ autogenerate: { directory: 'docs/examples' } }] },
+				{ label: 'Reference', items: [{ autogenerate: { directory: 'docs/reference' } }] },
 			],
 		}),
 	],

@@ -1,0 +1,48 @@
+---
+title: Examples
+description: Tested how-to recipes for recording, verifying and querying agent decisions with Tenbri.
+sidebar:
+  order: 0
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+Each recipe below was run end to end against `tenbri` and `tenbrid` `0.1.0-alpha.2`; the outputs shown are real, except where a recipe says a step was not run.
+
+<CardGrid>
+  <LinkCard
+    title="Record a refund"
+    href="/docs/examples/record-a-refund/"
+    description="A human approval, the agent's intent that cites it, and the outcome, then read them back."
+  />
+  <LinkCard
+    title="Verify as an auditor"
+    href="/docs/examples/verify-as-an-auditor/"
+    description="Pin the fingerprint, keep a checkpoint, and watch verification catch a one-byte edit."
+  />
+  <LinkCard
+    title="Review a policy change"
+    href="/docs/examples/policy-change-review/"
+    description="List every decision made under the old version of a policy, and their outcomes."
+  />
+  <LinkCard
+    title="Action schemas in CI"
+    href="/docs/examples/schemas-in-ci/"
+    description="Declare what an issue_refund entry must carry and check it on every pull request."
+  />
+  <LinkCard
+    title="tenbrid over REST"
+    href="/docs/examples/tenbrid-rest/"
+    description="Run tenbrid locally and write, list, tail and verify entries with curl."
+  />
+  <LinkCard
+    title="Streams on object storage"
+    href="/docs/examples/object-storage/"
+    description="Keep a stream in S3, Cloudflare R2 or MinIO instead of a local directory."
+  />
+  <LinkCard
+    title="Write from Rust"
+    href="/docs/examples/rust-writer/"
+    description="Embed tenbri-writer in a Rust program: create a stream, record a decision, verify."
+  />
+</CardGrid>

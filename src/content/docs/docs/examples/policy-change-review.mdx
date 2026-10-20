@@ -1,0 +1,123 @@
+---
+title: Review a policy change
+description: List every decision an agent made under the old version of a policy, with their outcomes.
+sidebar:
+  order: 3
+---
+
+Your refund policy moved from version 14 to version 15. Legal asks which refunds were decided under
+version 14, and how they ended. Each intent records the policy it read as an input
+(`policy:refund` at a version), so `tenbri query --input policy:refund@14` lists them. You will
+record five decisions across both versions, list the ones under `@14`, and join them to their
+outcomes with `jq`.
+
+**Prerequisites:** the `tenbri` CLI ([install](/docs/getting-started/install/)) and `jq`.
+
+## 1. Record decisions under both versions
+
+The `decide` helper writes an intent that read `policy:refund` at the given version, then its
+outcome.
+
+```sh
+export TENBRI_KEYS=./keys
+tenbri init audit/support > init.out
+PIN=$(sed -n 's/^stream key fingerprint (pin it): //p' init.out)
+
+decide() { # charge, policy version, status
+  id=$(tenbri append audit/support <<EOF | jq -r .id
+{"kind":"decision","phase":"intent","source":"sdk",
+ "principal":{"kind":"agent","id":"support-assistant"},
+ "action":{"type":"issue_refund","target":"stripe:charge/$1"},
+ "inputs":[{"ref":"policy:refund","version":"$2","digest":"hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa"}]}
+EOF
+)
+  tenbri append audit/support <<EOF > /dev/null
+{"kind":"decision","phase":"outcome","source":"sdk","intent":"$id","status":"$3",
+ "principal":{"kind":"agent","id":"support-assistant"},
+ "action":{"type":"issue_refund","target":"stripe:charge/$1"}}
+EOF
+}
+
+decide ch_1001 14 ok
+decide ch_1002 14 refused
+decide ch_1003 15 ok
+decide ch_1004 14 ok
+decide ch_1005 15 refused
+```
+
+## 2. List the decisions under version 14
+
+`query` prints one JSON object per line: `{"verification": ..., "entry": {...}}`. With `--key`,
+each row says `verified`; without it, `unpinned`.
+
+```sh
+tenbri query audit/support --input policy:refund@14 --key $PIN | head -1
+```
+
+```text
+{"verification":"verified","entry":{"action":{"target":"stripe:charge/ch_1001","type":"issue_refund"},"id":"01M5CT7KEC7RFZED0ZGR5CE3WV","inputs":[{"digest":"hmac-sha256:9f2c41aa…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent","prev":"sha256:a65f222c…","principal":{"id":"support-assistant","kind":"agent"},"seq":3,"sig":"ed25519:1a574901…","signer":"sess:2026-10-20:f5380ed47c61","source":"sdk","stream":"tnb1:4b1d7d7f9d2b492c8f507f5da47e33ab","ts":"2026-10-20T14:07:49.708Z","v":1}}
+```
+
+Pipe it to `jq` for the fields you need:
+
+```sh
+tenbri query audit/support --input policy:refund@14 --key $PIN \
+  | jq -c '{seq: .entry.seq, id: .entry.id, target: .entry.action.target, ts: .entry.ts, verification}'
+```
+
+```text
+{"seq":3,"id":"01M5CT7KEC7RFZED0ZGR5CE3WV","target":"stripe:charge/ch_1001","ts":"2026-10-20T14:07:49.708Z","verification":"verified"}
+{"seq":5,"id":"01M5CT7KG2WT23W8JZT618KGWT","target":"stripe:charge/ch_1002","ts":"2026-10-20T14:07:49.762Z","verification":"verified"}
+{"seq":9,"id":"01M5CT7KK89S9KXRYPMYH3WT6Z","target":"stripe:charge/ch_1004","ts":"2026-10-20T14:07:49.864Z","verification":"verified"}
+```
+
+Count per version:
+
+```sh
+tenbri query audit/support --input policy:refund@14 --key $PIN | jq -s length
+tenbri query audit/support --input policy:refund@15 --key $PIN | jq -s length
+```
+
+```text
+3
+2
+```
+
+The input must be `ref@version`. A bare ref is refused with exit code 2:
+
+```sh
+tenbri query audit/support --input policy:refund --key $PIN
+```
+
+```text
+tenbri: --input policy:refund: expected ref@version
+```
+
+## 3. Join to the outcomes
+
+The inputs are on the intents. Outcomes name their intent by `id`, so read every `issue_refund`
+entry once and join in `jq`:
+
+```sh
+tenbri query audit/support --action issue_refund --key $PIN | jq -s -c '
+  map(.entry) as $all
+  | $all[] | select(.phase == "intent" and any(.inputs[]?; .ref == "policy:refund" and .version == "14")) as $i
+  | $all[] | select(.intent == $i.id)
+  | {target: .action.target, status}'
+```
+
+```text
+{"target":"stripe:charge/ch_1001","status":"ok"}
+{"target":"stripe:charge/ch_1002","status":"refused"}
+{"target":"stripe:charge/ch_1004","status":"ok"}
+```
+
+## What happened
+
+Each intent recorded the exact policy version it read, inside a signed entry, so the list cannot
+be edited after the fact without failing verification. `query --input` matches `ref` and `version`
+exactly; repeat `--input` to require several inputs. Because the query ran with `--key`, every row
+comes from a stream verified against the pinned fingerprint.
+
+Related: [Streams and entries](/docs/concepts/streams-and-entries/) ·
+[Entry format](/docs/reference/entry-format/) · [CLI reference](/docs/reference/cli/)

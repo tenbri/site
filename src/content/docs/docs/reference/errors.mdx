@@ -1,0 +1,133 @@
+---
+title: Error codes
+description: Every format v1 verification and validation error code, what it means and where you see it.
+sidebar:
+  order: 3
+---
+
+Format v1 names every failure with a stable lowercase code. The same codes appear in the CLI, in
+`tenbrid` responses and in the libraries. `tenbrid` also has its own request error codes
+(`TENBRI_*`), listed in [API](/docs/reference/api/#errors).
+
+## Where you see them
+
+| Where | Form | Example |
+| --- | --- | --- |
+| `tenbri verify` | `broken at seq <n>: <code>: <detail>`, exit 1 | `broken at seq 3: bad_signature: ...` |
+| `tenbri verify --checkpoint` | Same line, then `against checkpoint <origin> at size <size>; the stream has <k> entries`, exit 1 | `broken at seq 9: truncated: ...` |
+| `tenbri query`, `tail`, `receipt create` | stderr `tenbri: the stream does not verify: broken at seq <n>: <code>: <detail>`, exit 1 | |
+| `tenbri append` | stderr `tenbri: stdin: <code>: <detail>` for a draft that does not parse; `tenbri: entry rejected: <code>: <detail>` for one the writer refuses. Exit 2; nothing is written. | `tenbri: entry rejected: bad_intent: ...` |
+| `tenbri receipt verify` | `receipt does not verify: <reason>`, exit 1 | |
+| `tenbrid` append | `TENBRI_INVALID_ENTRY` (400), with the code in `error.reason`; nothing is written | `"reason": "bad_intent"` |
+| `tenbrid` verify | `broken.code` in the `GET /v1/streams/{stream}/verify` report | `"code": "bad_signature"` |
+| `tenbrid` writes to a broken stream | `TENBRI_STREAM_BROKEN` (500), with the code in `error.reason` | |
+
+Schema violations from `tenbri.toml` are not format codes: they are reported as
+`<path>: <message>` (see [Action schemas](/docs/reference/schemas/#violations)).
+
+## Verification order
+
+For each entry, in stream order, a verifier runs these checks and reports the first that fails,
+with the entry's sequence number:
+
+1. canonical bytes;
+2. top-level members, then the fields and kind rules;
+3. `seq`;
+4. for entry 1, the genesis rules and the pin; for the others, `stream`, then `prev`;
+5. `id` uniqueness;
+6. the signer: certified, allowed for this kind, not revoked, not expired;
+7. the signature, then each attestation;
+8. `hlc`;
+9. intents, reconciles and approvals, then key events.
+
+After the last entry it checks HEAD. A revocation that reaches back is reported at the earliest
+entry it invalidates, once the whole stream is read; an earlier failure wins.
+
+## Canonical bytes
+
+| Code | Meaning |
+| --- | --- |
+| `parse` | Not a single valid JSON value in valid UTF-8: invalid UTF-8, a lone surrogate escape, a leading byte order mark, or anything but whitespace after the value |
+| `duplicate_key` | An object member name appears twice, at any depth |
+| `not_integer` | A number with a fraction, an exponent, or a negative zero (`1.0`, `1e2`, `-0`) |
+| `integer_range` | An integer outside -(2^53 - 1) to 2^53 - 1. A literal too large for 64 bits may be reported as `not_integer`. |
+| `not_canonical` | The stored bytes differ from the canonical form (RFC 8785) of their parse: whitespace, key order, escape or number spelling |
+
+## Fields
+
+| Code | Meaning |
+| --- | --- |
+| `unknown_field` | A top-level member format v1 does not define (also on HEAD) |
+| `invalid_field` | A member missing, of the wrong type or encoding, or breaking a kind rule; also any unknown member inside a nested object |
+
+## Keys and signatures
+
+| Code | Meaning |
+| --- | --- |
+| `bad_signature` | A signature, or an attestation, that does not verify (strict RFC 8032 verification) |
+| `unknown_signer` | A signer no earlier key event certified. For a checkpoint: no signature line matches a key the stream certified. |
+| `signer_not_allowed` | A key signing what its role does not allow: `key` entries need the current stream key, everything else a session key. For a checkpoint: the key is not a session key, or was certified after its size. |
+| `key_expired` | An entry dated (`ts`) after its session key's `not_after` |
+| `key_revoked` | An entry signed by a key revoked from its sequence number, including entries written before the revocation |
+| `bad_key_event` | A key event that reuses a key id or public key, or revokes an unknown key or the current stream key |
+| `bad_genesis` | Entry 1 is not a self-signed stream key certification for this stream id |
+| `untrusted_root` | The genesis key is not the pinned one (`--key`) |
+
+## Chain
+
+| Code | Meaning |
+| --- | --- |
+| `wrong_stream` | An entry or HEAD of another stream; for a checkpoint, an origin that is not the stream's id |
+| `bad_seq` | A sequence number that is not the previous plus one |
+| `bad_prev` | A `prev` that is not the previous entry's hash |
+| `duplicate_id` | An entry id used before in the stream |
+| `bad_intent` | An outcome or reconcile with no open intent to close |
+| `bad_approval` | An `approval.entry` that is not an earlier approval entry |
+| `bad_hlc` | A hybrid logical clock that went backwards |
+
+## Storage
+
+| Code | Meaning |
+| --- | --- |
+| `bad_head` | HEAD malformed, unsigned, rolled back (a lower `counter` than one seen), or not matching the stream |
+| `bad_batch` | A batch file that breaks the layout rules: empty lines, carriage returns, a missing final line feed |
+| `missing_batch` | A batch HEAD needs is absent; reported at its first sequence number |
+
+## Checkpoints
+
+From [spec/checkpoints.md](https://github.com/tenbri/tenbri/blob/main/spec/checkpoints.md). A
+checkpoint is checked after the stream verifies.
+
+| Code | Meaning | Reported at seq |
+| --- | --- | --- |
+| `bad_checkpoint` | A checkpoint that is malformed, or whose signature by a matching key does not verify | the checkpoint's size |
+| `truncated` | The stream has fewer entries than a checkpoint it is checked against covers | the first missing entry |
+| `fork` | The stream's first entries do not have the root a checkpoint signed for them: rewritten at or before that seq | the checkpoint's size |
+
+`wrong_stream` (seq 1), `unknown_signer`, `signer_not_allowed` and `key_revoked` (at the size) are
+reused for checkpoints with the meanings above.
+
+## Receipts
+
+From [spec/receipts.md](https://github.com/tenbri/tenbri/blob/main/spec/receipts.md).
+
+| Code | Meaning |
+| --- | --- |
+| `bad_receipt` | A receipt file that is malformed, of another version, or does not start with the genesis entry |
+| `bad_proof` | An entry whose inclusion proof does not verify against the receipt's checkpoint: the entry or its proof was changed, the checkpoint is another one, or the entry is beyond it |
+| `bad_timestamp` | An RFC 3161 token that is malformed, for other data, changed, not signed for time stamping, or not chaining to a pinned TSA root at its time |
+
+Receipts reuse `bad_checkpoint`, `wrong_stream`, `unknown_signer`, `signer_not_allowed`,
+`key_expired`, `key_revoked` and the entry codes.
+
+## Encrypted bodies
+
+Reading an encrypted body has two outcomes that are not chain failures
+([spec/privacy.md](https://github.com/tenbri/tenbri/blob/main/spec/privacy.md)):
+
+| Result | Meaning |
+| --- | --- |
+| `address_mismatch` | The blob's SHA-256 is not its address: the blob was replaced |
+| `not_opened` | No data key epoch opens it: the wrong key, another stream's blob, changed bytes, or a blob shorter than 24 bytes |
+
+A missing blob shows as a missing body, never as a broken chain.

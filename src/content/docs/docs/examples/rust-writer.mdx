@@ -1,0 +1,155 @@
+---
+title: Write from Rust
+description: Embed tenbri-writer in a Rust program to create a stream, record an intent and outcome, and verify.
+sidebar:
+  order: 7
+---
+
+Your agent is a Rust program and you want to write entries in process, without the CLI or a server.
+You will add the Tenbri crates from crates.io, write a small `main.rs` that creates a stream in a
+local directory, records an `issue_refund` intent and its outcome, and verifies the stream against
+its pinned fingerprint. Then you check the same stream with the `tenbri` CLI.
+
+**Prerequisites:** Rust 1.85 or later with `cargo`, and optionally the `tenbri` CLI
+([install](/docs/getting-started/install/)).
+
+## 1. Create the project
+
+```sh
+cargo new refund-agent
+cd refund-agent
+```
+
+```toml title="Cargo.toml"
+[package]
+name = "refund-agent"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tenbri-core = "0.1.0-alpha.2"
+tenbri-keys = "0.1.0-alpha.2"
+tenbri-store = "0.1.0-alpha.2"
+tenbri-writer = "0.1.0-alpha.2"
+tokio = { version = "1", features = ["macros", "rt"] }
+```
+
+Pre-release versions must be named exactly. `tenbri-store` handles local directories by default;
+add `features = ["s3"]` for `s3://` and `r2://` streams.
+
+## 2. Write main.rs
+
+```rust title="src/main.rs"
+use tenbri_core::{Action, Entry, Input, Kind, Principal, PrincipalKind, Status};
+use tenbri_keys::{Key, SESSION_LIFETIME_MS};
+use tenbri_store::LocalStore;
+use tenbri_writer::{Writer, now_ms, verify};
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // A fresh, empty directory for the stream.
+    std::fs::create_dir_all("audit/support")?;
+    let store = LocalStore::open("audit/support")?;
+
+    // The stream key identifies the stream; the session key signs entries.
+    let stream_key = Key::new_stream()?;
+    let session = Key::new_session(now_ms(), SESSION_LIFETIME_MS)?;
+    let pin = stream_key.fingerprint();
+    let mut w = Writer::create(store.clone(), &stream_key, session).await?;
+    println!("stream key fingerprint (pin it): {pin}");
+
+    // The intent: written and durable before the refund runs.
+    let intent = w
+        .intent(Entry {
+            principal: Some(Principal {
+                kind: PrincipalKind::Agent,
+                id: "support-assistant".into(),
+            }),
+            action: Some(Action {
+                r#type: "issue_refund".into(),
+                target: Some("stripe:charge/ch_3PqX".into()),
+            }),
+            inputs: Some(vec![Input {
+                r#ref: "policy:refund".into(),
+                version: "14".into(),
+                digest:
+                    "hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa"
+                        .into(),
+            }]),
+            ..Entry::new(Kind::Decision)
+        })
+        .await?;
+    println!("intent  seq {} id {}", intent.seq, intent.id);
+
+    // ... call the payment API here ...
+
+    let outcome = w.outcome(&intent, Status::Ok).await?;
+    println!(
+        "outcome seq {} closes {}",
+        outcome.seq,
+        outcome.intent.as_deref().unwrap_or("?")
+    );
+
+    // Read the whole stream back and check it against the pinned key.
+    let report = verify(&store, Some(&pin)).await?;
+    match report.broken {
+        None => println!(
+            "verified {} entries, stream {}",
+            report.entries,
+            report.stream.unwrap_or_default()
+        ),
+        Some(b) => println!("{b}"),
+    }
+    Ok(())
+}
+```
+
+`Writer::intent` sets `phase: intent` and `source: sdk`. `Writer::outcome` copies the intent's
+principal, action, source and subject, and sets `intent` and `status`.
+
+## 3. Run it
+
+```sh
+cargo run -q
+```
+
+```text
+stream key fingerprint (pin it): sha256:d6034344119117a0420cc065fdbddb6d392c766757bf29d6144eedf40d2f62d6
+intent  seq 3 id 01M5CTC09AZQVGF27JQG2GBA81
+outcome seq 4 closes 01M5CTC09AZQVGF27JQG2GBA81
+verified 4 entries, stream tnb1:d6034344119117a0420cc065fdbddb6d
+```
+
+Seq 1 and 2 are the key entries `Writer::create` wrote: the stream key and the session key it
+certified. A second run fails, because the directory already holds a stream:
+
+```text
+Error: Exists
+```
+
+## 4. Check it with the CLI
+
+The stream is a normal stream on disk:
+
+```sh
+tenbri verify audit/support --key sha256:d6034344119117a0420cc065fdbddb6d392c766757bf29d6144eedf40d2f62d6
+tenbri tail audit/support -n 2 --no-follow | jq -c '{seq, kind, phase, status, action: .action.type}'
+```
+
+```text
+verified 4 entries, stream tnb1:d6034344119117a0420cc065fdbddb6d, pinned to sha256:d6034344119117a0420cc065fdbddb6d392c766757bf29d6144eedf40d2f62d6
+{"seq":3,"kind":"decision","phase":"intent","status":null,"action":"issue_refund"}
+{"seq":4,"kind":"decision","phase":"outcome","status":"ok","action":"issue_refund"}
+```
+
+## What happened
+
+`Writer::create` wrote the genesis entry signed by the new stream key, then certified a 24-hour
+session key that signed everything after. Each `intent` and `outcome` call returned only once its
+batch and HEAD were durable on disk. This example keeps the keys in memory and drops them on exit,
+so nothing can append to the stream later: in a real program, create the stream with `tenbri init`
+(which saves the keys in `$TENBRI_KEYS`), then open it with `Writer::open` and hand the writer its
+keys with `Writer::use_keys`, as the CLI does.
+
+Related: [Keys](/docs/concepts/keys/) · [Streams and entries](/docs/concepts/streams-and-entries/) ·
+[Integrity](/docs/concepts/integrity/) · [Entry format](/docs/reference/entry-format/)

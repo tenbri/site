@@ -1,0 +1,139 @@
+---
+title: Action schemas in CI
+description: Declare what an issue_refund entry must carry in tenbri.toml and check it on every pull request.
+sidebar:
+  order: 4
+---
+
+An action schema says what an entry for one action type must carry: inputs, a rule, an approval,
+a target pattern, and any member by its dotted path. You will write a `tenbri.toml` for
+`issue_refund`, run `tenbri schema check` against a stream that passes and one that fails, and add
+a GitHub Actions job that checks the file on every pull request.
+
+**Prerequisites:** the `tenbri` CLI ([install](/docs/getting-started/install/)) and a stream with
+refund decisions, such as the one from [Record a refund](/docs/examples/record-a-refund/).
+
+## 1. Write tenbri.toml
+
+```toml title="tenbri.toml"
+# Every action type must be declared here.
+unknown_actions = "reject"
+
+[actions.issue_refund]
+description = "Refund a card charge through Stripe."
+inputs = ["policy:refund"]
+rule = true
+approval = true
+target = "stripe:charge/*"
+
+[actions.issue_refund.fields."rule.result"]
+allowed = ["allow"]
+```
+
+The requirements apply to intents. Outcomes, approvals and other entries that name an action are
+only checked for a declared action type.
+
+## 2. Check a stream that passes
+
+`schema check` reads `tenbri.toml` from the current directory (or `--schema FILE`), then every
+entry of the streams you name.
+
+```sh
+tenbri schema check audit/support; echo "exit $?"
+```
+
+```text
+tenbri.toml: 1 action schemas, unknown actions rejected
+audit/support: 5 entries, 0 break their schema
+exit 0
+```
+
+## 3. Check a stream that fails
+
+Append an intent with no rule and no approval, and one for an action the file does not declare:
+
+```sh
+export TENBRI_KEYS=./keys
+tenbri append audit/support > /dev/null <<'EOF'
+{"kind":"decision","phase":"intent","source":"sdk",
+ "principal":{"kind":"agent","id":"support-assistant"},
+ "action":{"type":"issue_refund","target":"stripe:charge/ch_9Zk2"},
+ "inputs":[{"ref":"policy:refund","version":"15","digest":"hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa"}]}
+EOF
+tenbri append audit/support > /dev/null <<'EOF'
+{"kind":"decision","phase":"intent","source":"sdk",
+ "principal":{"kind":"agent","id":"support-assistant"},
+ "action":{"type":"close_ticket","target":"zendesk:ticket/4821"}}
+EOF
+tenbri schema check audit/support; echo "exit $?"
+```
+
+```text
+tenbri.toml: 1 action schemas, unknown actions rejected
+audit/support seq 6: rule: required
+audit/support seq 6: approval: required
+audit/support seq 7: action.type: `close_ticket` is not declared in tenbri.toml
+audit/support: 7 entries, 2 break their schema
+exit 1
+```
+
+A typo in `tenbri.toml` is an error before any stream is read, with exit code 2. Here `rule` is
+misspelled `rul`:
+
+```text
+tenbri: tenbri.toml: TOML parse error at line 7, column 1
+  |
+7 | rul = true
+  | ^^^
+unknown field `rul`, expected one of `description`, `inputs`, `rule`, `approval`, `durability`, `target`, `fields`
+```
+
+With no stream given, `schema check` only validates the file:
+
+```sh
+tenbri schema check; echo "exit $?"
+```
+
+```text
+tenbri.toml: 1 action schemas, unknown actions rejected
+exit 0
+```
+
+## 4. Check it on every pull request
+
+This job installs the published CLI and validates `tenbri.toml` whenever a pull request changes
+it. Add stream paths after `check` (a test fixture, or an `s3://` stream with credentials from
+secrets) to check entries too.
+
+```yaml title=".github/workflows/tenbri-schema.yml"
+name: tenbri schema
+
+on:
+  pull_request:
+    paths:
+      - tenbri.toml
+
+jobs:
+  schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install tenbri
+        run: cargo install tenbri-cli --version 0.1.0-alpha.2 --locked
+      - name: Check tenbri.toml
+        run: tenbri schema check --schema tenbri.toml
+```
+
+The install and check steps were run locally against the published `0.1.0-alpha.2` crate; the
+workflow file itself was not run on GitHub.
+
+## What happened
+
+`schema check` loaded the schema, then checked every entry and printed each violation with its
+sequence number and member path. It exits 1 when any entry breaks its schema and 2 when the file
+itself is invalid, so CI fails either way. `tenbrid` applies the same file at write time when you
+set `schema` in its configuration, and refuses a breaking append with `TENBRI_SCHEMA_VIOLATION`.
+
+Related: [Schemas reference](/docs/reference/schemas/) · [CLI reference](/docs/reference/cli/) ·
+[Errors](/docs/reference/errors/) · [API reference](/docs/reference/api/)

@@ -1,0 +1,134 @@
+---
+title: Privacy
+description: How Tenbri keeps content out of the chain with encrypted blobs and keyed digests, so personal data can be erased without breaking verification.
+sidebar:
+  order: 4
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="caution" title="Planned">
+The privacy layer is specified (`spec/privacy.md`, provisional) but not in a release yet: blob
+encryption, per-subject keyed digests and erasure, the local key store, and the `tenbri erase` and
+`tenbri keys` commands are all still to come. What works in `0.1.0-alpha.2` is the format: entries
+accept `subject`, `body` and `inputs[].digest`, and they are hashed and signed like every other
+field. Tenbri does not compute digests or encrypt bodies for you yet.
+</Aside>
+
+## The problem
+
+An append-only, hash-chained log cannot delete a line without breaking verification. The right to
+erasure (GDPR) needs content to disappear. Tenbri resolves this by keeping content out of the
+chain:
+
+- an entry's `body` is the **address** of an encrypted blob, never the content;
+- an entry's input `digest` is a **keyed** hash, never a plain one.
+
+Both depend on a key that belongs to the entry's `subject`. Deleting that key erases the content.
+Every chain, checkpoint and receipt still verifies, because none of them depends on the key or the
+plaintext.
+
+## Data keys
+
+A **data key** is 32 random bytes, separate from the [signing keys](/docs/concepts/keys/). A key
+store holds:
+
+- one or more per **subject**: the pseudonymous handle in an entry's `subject` (such as
+  `subj_7f3c91d2`);
+- one or more per **tenant** (the stream), used by entries with no `subject`.
+
+Each further key of the same subject or tenant starts a new **key epoch**. New data uses the
+newest epoch; older epochs keep opening older data until they are erased.
+
+Two keys are derived from each data key with HKDF-SHA-256:
+
+| Derived key | `info` | Used for |
+| --- | --- | --- |
+| Blob key | `tenbri/blob/v1` | Encrypting bodies |
+| Digest key | `tenbri/digest/v1` | Input digests |
+
+The digest key alone confirms a subject's input digests and opens nothing. It is what an operator
+can disclose to an auditor for one subject.
+
+## Encrypted bodies
+
+A body (the prompt, the message, the document) is sealed with XChaCha20-Poly1305 under the blob
+key of the newest data key of the entry's subject, or of the tenant. The stream id is bound in as
+associated data, so a blob cannot be moved to another stream.
+
+- The blob's address is `blob:ct-sha256:` and the SHA-256 of the whole blob, nonce included. The
+  entry's `body` holds it. It depends on the ciphertext only, so it reveals nothing about the body,
+  and two equal bodies have different addresses.
+- The blob is stored in the stream at `blobs/ct-sha256/<2 hex>/<62 hex>`, written once.
+- A reader checks the blob's hash against the address (`address_mismatch` if it was replaced),
+  then tries each epoch's key in turn (`not_opened` if none opens it).
+- A missing blob shows as a missing body, never as a broken chain.
+- Blobs carry no key identifier, so blobs of the same subject cannot be linked by their bytes.
+
+## Input digests
+
+Each input in `inputs` is `{ref, version, digest}`. `ref` and `version` are plaintext, so you can
+query by them. The digest is:
+
+```text
+"hmac-sha256:" || hex HMAC-SHA-256(digest key, the input's content bytes)
+```
+
+Without the key, a guessed value (an email address, a short code) cannot be confirmed from the log.
+What the content bytes are (the document, the policy text, the message) is the integration's
+choice, fixed per input `ref`.
+
+## Erasure
+
+Erasing a subject deletes every epoch of its data keys. Then:
+
+- its blobs can no longer be opened, and its input digests can no longer be confirmed;
+- every entry, HEAD, checkpoint, receipt and link still verifies;
+- a new key made later for the same handle starts again at epoch 1 and opens none of the old blobs.
+
+Entries without a subject can only be erased tenant-wide, by erasing the tenant's keys.
+
+An erasure is recorded in the stream as a `note` entry, written after the keys are deleted:
+
+| Member | Value |
+| --- | --- |
+| `kind` | `note` |
+| `subject` | The erased handle; absent for a tenant-wide erasure |
+| `action` | `{"type": "tenbri.erase", "target": "<reason>"}`, the reason a reference such as a request id |
+| `principal` | Who asked for it, when known |
+
+A new key epoch is recorded the same way, with action type `tenbri.key_epoch` and target
+`epoch:<n>`. Action types starting with `tenbri.` are reserved for notes Tenbri writes.
+
+## The local key store
+
+The spec defines a local key store beside the stream's signing keys, at
+`<keys dir>/<stream id, ':' as '-'>/data/`, never under the stream's directory or bucket prefix:
+
+- one file per subject and epoch, `s-<hex SHA-256 of the handle>.<epoch>.json` (the tenant's:
+  `tenant.<epoch>.json`), created exclusively and never rewritten;
+- directory mode `0700` and files `0600` on Unix; a store open to group or others, or a symlink in
+  their place, is refused;
+- erasure overwrites each file with zeros, syncs it, deletes it and syncs the directory.
+
+Erasure is immediate on a disk without snapshots. On copy-on-write filesystems, with snapshots, or
+with backups of the key store, old copies survive until those are gone. Keep the key store out of
+the log's versioned or Object Lock bucket and out of its backups.
+
+Key management services and HSMs are not part of format v1.
+
+## What this means today
+
+With `0.1.0-alpha.2`:
+
+- Keep personal data out of entries. Use pseudonymous `subject` handles and references in
+  `action.target` and `inputs[].ref`. The spec documents `action.target` as possibly personal data.
+- If you set `digest`, compute the HMAC yourself, with a key you keep apart from the log.
+- If you set `body`, the address must have the `blob:ct-sha256:` form; Tenbri does not store or
+  read the blob yet.
+
+## Next
+
+- [Streams and entries](/docs/concepts/streams-and-entries/): where `subject`, `body` and `inputs`
+  sit in an entry.
+- [Keys](/docs/concepts/keys/): signing keys, which erasure never touches.
