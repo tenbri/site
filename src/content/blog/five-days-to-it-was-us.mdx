@@ -72,30 +72,31 @@ Receipts, which prove just the entries that touched Hugging Face hosts while the
 We want to be precise here, because a recording tool sold as a safety tool is worse than none.
 
 - **Would not have stopped it.** Tenbri records decisions. It does not block them. The breakout went through the network and the sandbox, not through a governed tool call. A policy layer that only sees tool calls would have been bypassed too.
-- **Silence is not an edit.** An agent that stops writing leaves no entry to tamper with. If the writer sat inside the sandbox, a misbehaving agent could act without recording. The gap has to be noticed from outside.
 - **Little for the victim directly.** Hugging Face did not run the attacking agents, so it had nothing to record. Its own detection came from its security telemetry.
 
 <IncidentFigure n={3}>
 	Fig. 3. The record is only as strong as its placement. The writer has to live outside the agents'
 	trust boundary, take entries one way, and send checkpoints to someone the operator does not
-	control. *Silent-stream alerts are planned, see below.
+	control. *Silent-stream alerts are part of the observing and alerting work below.
 </IncidentFigure>
 
 ## What we're building because of it
 
-This incident is why we added a **fleet and liveness** track to the [roadmap](https://github.com/tenbri/tenbri#status). The goal: an operator can attribute an agent's actions to a run within hours of an outside report. None of it has shipped yet, and names may change.
+Tamper-evidence catches an entry that was edited or cut. It cannot, on its own, catch an agent that acts without writing anything. So Tenbri is growing beyond what agents report about themselves: it will **observe** what agents do on the network and **alert** when the record and reality drift apart.
+
+This is the **fleet and liveness** track on the [roadmap](https://github.com/tenbri/tenbri#status). The goal: an operator learns about a silent or undeclared agent from Tenbri, not from the victim, and can attribute any action to a run within hours of an outside report. None of it has shipped yet, and names may change.
 
 - **Network targets on every action.** Host, IP and port under `action.net`, indexed, so `tenbri query --target-domain huggingface.co` answers “was this us?” directly.
-- **Proxy-observed entries.** The proxy on an agent's route out writes its own signed entry for each connection. An agent can skip logging; it cannot skip the proxy. Here, the only permitted route out was a package proxy.
-- **Actions nobody declared.** `tenbri query --unmatched` lists connections the proxy saw with no matching agent intent.
-- **Run registration and silent-stream alerts** in `tenbrid`: a registered run whose stream goes quiet raises an alert.
+- **Observed, not just reported.** The proxy on an agent's route out writes its own signed entry for each connection. An agent can skip logging; it cannot skip the proxy. Here, the only permitted route out was a package proxy.
+- **Alerts on actions nobody declared.** A connection the proxy saw with no matching agent intent is flagged, and `tenbri query --unmatched` lists them after the fact.
+- **Alerts on silence.** `tenbrid` knows which runs are registered and active. A run whose stream goes quiet while it still holds credentials raises an alert, whether the cause is a crash, a disabled monitor or an agent that stopped reporting.
 
 ## What this incident teaches us
 
 - **Treat evaluation runs as production.** The agents that caused this were being tested, not deployed. Their decisions deserved the same record.
 - **Record intent before action.** The outcome of a breach shows up in the victim's logs anyway. What only the operator can know is what the agent meant to do and why it was allowed.
 - **Put the record out of the agents' reach.** Separate host, separate keys, append-only intake, and checkpoints sent to witnesses.
-- **Watch for silence.** Tamper-evidence catches edits and truncation. Only liveness checks catch an agent that never wrote.
+- **Watch for silence.** Tamper-evidence catches edits and truncation. Observing the network and alerting on quiet streams catches an agent that never wrote.
 
 Tenbri is pre-release (`0.1.0-alpha.2`). Hash chains, signatures, intent and outcome entries and Merkle checkpoints are done; receipts and witness support are on the road to v0.1.0. None of this would have prevented the July breakout. It would have meant that, on July 16, someone at OpenAI could run one query and say “that was us” with proof.
 
