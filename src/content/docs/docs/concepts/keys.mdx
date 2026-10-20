@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 Every entry is signed with Ed25519. A stream has two kinds of keys.
 
@@ -25,12 +25,44 @@ signs only key events, it can stay offline most of the time.
 | Fingerprint | `sha256:` and the hex SHA-256 of the 32-byte public key |
 | Stream id | `tnb1:` and the first 32 hex digits of the genesis stream key's fingerprint |
 
-`tenbri init` prints the fingerprint of the new stream key:
+Creating a stream makes its stream key and gives you the fingerprint to pin:
+
+<Tabs syncKey="lang">
+<TabItem label="CLI">
+
+```sh
+tenbri init audit/support
+```
 
 ```text
 created stream tnb1:5db31441baa2d080326d9f6c83c95319 at audit/support
 stream key fingerprint (pin it): sha256:5db31441baa2d080326d9f6c83c95319c6e64dd5c33a49257cc54d231cc36484
 ```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from tenbri import Tenbri
+
+# create=True makes the stream and its keys when there is none.
+log = Tenbri.open("audit/support", create=True)
+print("pin this:", log.fingerprint)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+import { Tenbri } from 'tenbri'
+
+// create: true makes the stream and its keys when there is none.
+const log = await Tenbri.open('audit/support', { create: true })
+console.log('pin this:', log.fingerprint)
+```
+
+</TabItem>
+</Tabs>
 
 ## Pinning
 
@@ -45,8 +77,9 @@ tenbri verify audit/support --key sha256:5db31441baa2d080326d9f6c83c95319c6e64dd
 ```
 
 If the genesis key differs, verification fails at seq 1 with `untrusted_root`. Without `--key`,
-`verify` exits 3 and says the stream is not pinned. `query`, `tail` and `tenbrid` (the `key`
-setting of a stream) take the same pin.
+`verify` exits 3 and says the stream is not pinned. `query`, `tail`, `receipt create` and
+`receipt verify`, `tenbrid` (the `key` setting of a stream) and the Python and TypeScript bindings
+(the `key` option of `open`, or the argument of `verify`) take the same pin.
 
 Store the fingerprint where the stream's operator cannot change it: in the auditor's own records,
 in your verifier's configuration, in a contract.
@@ -120,10 +153,11 @@ broken one.
 This is how an operator marks the window in which a stolen session key was used: revoke it from
 the first `seq` the thief could have signed. Revocation applies to checkpoints the same way.
 
-<Aside type="caution" title="Planned">
-The CLI has no command to rotate or revoke signing keys yet (`tenbri keys` is not in a release).
-Rotation and revocation work through the Rust writer API in `tenbri-writer`: `Writer::rotate` and
-`Writer::revoke`.
+<Aside type="note">
+The CLI and the Python and TypeScript bindings do not rotate or revoke signing keys:
+`tenbri keys rotate` rotates [data keys](/docs/concepts/privacy/#managing-data-keys), which are
+separate. Rotation and revocation of signing keys work through the Rust writer API in
+`tenbri-writer`: `Writer::rotate` and `Writer::revoke`.
 </Aside>
 
 ## Where keys are kept
@@ -155,6 +189,18 @@ the secret:
 
 On Unix the directories are created mode `0700` and secret files `0600`. A key file is never
 replaced.
+
+`tenbri keys list <stream>` prints the signing keys held for a stream (and its data keys), never a
+secret:
+
+```text
+signing keys of tnb1:dc736478ac6b04bad25e3a3a6f8d71aa (<keys dir>/tnb1-dc736478ac6b04bad25e3a3a6f8d71aa):
+  sess:2026-10-20:adb9599f29d0 session ed25519:641a6cdf885136243e096b3227edc4e0306e0467759a36a1a2ef0b6b58755da5 until 2026-10-21T14:46:33.240Z
+  stream:dc736478ac6b stream ed25519:e2d9b038a3a00790e40737bf798d1f0c2d468932e2610d6d64cfd05b4eeb9e63
+```
+
+The same directory holds `data/`, the [data keys](/docs/concepts/privacy/#the-local-key-store) for
+encrypted bodies and input digests.
 
 ### Keep keys apart from the stream
 

@@ -5,158 +5,489 @@ sidebar:
   order: 2
 ---
 
+import { Aside, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
 You are the auditor. The operator gives you the stream's fingerprint through a channel they cannot
 rewrite later (a signed email, a ticket, a contract annex). You verify the stream against it, keep
-a checkpoint, then play the attacker: edit one byte of a batch file on disk and watch `tenbri
-verify` fail with the first broken sequence number and exit code 1.
+a checkpoint, then play the attacker: edit one byte of a batch file on disk and watch verification
+fail with the first broken sequence number. Verifying needs only read access to the stream and the
+fingerprint, never the operator's keys.
 
-**Prerequisites:** the `tenbri` CLI ([install](/docs/getting-started/install/)) and `jq`.
+## Prerequisites
 
-## 1. Set up a stream to audit
+- A copy of the stream, or read access to where it lives, and its fingerprint. Step 1 makes one.
+- The `tenbri` CLI to set up the stream and seal a checkpoint, plus `jq`:
 
-The operator side: a stream with one intent and its outcome.
+  ```sh
+  cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+  ```
 
-```sh
-export TENBRI_KEYS=./keys
-tenbri init audit/support
-INTENT_ID=$(tenbri append audit/support <<'EOF' | jq -r .id
-{"kind":"decision","phase":"intent","source":"sdk",
- "principal":{"kind":"agent","id":"support-assistant"},
- "action":{"type":"reply_ticket","target":"zendesk:ticket/4821"}}
-EOF
-)
-tenbri append audit/support <<EOF > /dev/null
-{"kind":"decision","phase":"outcome","source":"sdk","intent":"$INTENT_ID","status":"ok",
- "principal":{"kind":"agent","id":"support-assistant"},
- "action":{"type":"reply_ticket","target":"zendesk:ticket/4821"}}
-EOF
-```
+- The tool you verify with:
 
-```text
-created stream tnb1:c124ed99a66c93f098f7892e962ddba1 at audit/support
-stream key fingerprint (pin it): sha256:c124ed99a66c93f098f7892e962ddba140fe7218aed1496e1dcbb0a009e38706
-keys: ./keys/tnb1-c124ed99a66c93f098f7892e962ddba1
-verify with: tenbri verify audit/support --key sha256:c124ed99a66c93f098f7892e962ddba140fe7218aed1496e1dcbb0a009e38706
-```
+<Tabs syncKey="lang">
+<TabItem label="CLI">
 
-## 2. Pin the fingerprint
+The `tenbri` CLI above is all you need.
 
-The fingerprint is your trust root. Without it, `verify` can only say the stream agrees with its
-own genesis key, which anyone who rewrites the whole stream can also produce. It exits 3.
+</TabItem>
+<TabItem label="Python">
+
+Python 3.10 or later.
+
+<Tabs syncKey="py-pkg">
+<TabItem label="pip">
 
 ```sh
-tenbri verify audit/support; echo "exit $?"
+pip install --pre tenbri
 ```
 
-```text
-consistent: 4 entries, stream tnb1:c124ed99a66c93f098f7892e962ddba1
-NOT pinned: this only shows the stream agrees with its own genesis key; pass --key <fingerprint>
-exit 3
-```
-
-Pass the fingerprint you received with `--key`:
+</TabItem>
+<TabItem label="uv">
 
 ```sh
-PIN=sha256:c124ed99a66c93f098f7892e962ddba140fe7218aed1496e1dcbb0a009e38706
-tenbri verify audit/support --key $PIN; echo "exit $?"
+uv add --prerelease allow tenbri
 ```
 
-```text
-verified 4 entries, stream tnb1:c124ed99a66c93f098f7892e962ddba1, pinned to sha256:c124ed99a66c93f098f7892e962ddba140fe7218aed1496e1dcbb0a009e38706
-exit 0
-```
-
-## 3. Keep a checkpoint
-
-:::caution[Unreleased]
-`tenbri checkpoint` is on the `main` branch, not in `0.1.0-alpha.2`; build from source to follow this step. In the release, writers seal checkpoints, and `verify --checkpoint` works the same way.
-:::
-
-A checkpoint is a signed note of the stream's size and Merkle root. The operator seals one; you
-keep a copy outside the operator's reach.
+</TabItem>
+<TabItem label="poetry">
 
 ```sh
-tenbri checkpoint audit/support
-cp audit/support/checkpoints/000000000004.note seen.note
-head -3 seen.note
+poetry add --allow-prereleases tenbri
 ```
 
-```text
-checkpoint at size 4: checkpoints/000000000004.note
-tnb1:c124ed99a66c93f098f7892e962ddba1
-4
-WHteYfOCqQogIrDWQgOYnojIlW4HXh/htZn9Dloi2Ag=
-```
+</TabItem>
+</Tabs>
 
-The three lines are the origin (the stream id), the size and the root hash. A blank line and the
-signature line follow.
+</TabItem>
+<TabItem label="TypeScript">
 
-Next time, verify against the checkpoint you kept. The stream must still hold exactly the entries
-it covers:
+Node 22.18 or later, which runs `.ts` files directly, in a project with `"type": "module"`
+(`npm pkg set type=module`).
+
+<Tabs syncKey="js-pkg">
+<TabItem label="npm">
 
 ```sh
-tenbri verify audit/support --key $PIN --checkpoint seen.note; echo "exit $?"
+npm install tenbri@next
 ```
 
-```text
-matches checkpoint tnb1:c124ed99a66c93f098f7892e962ddba1 at size 4
-matches its latest checkpoint, at size 4
-verified 4 entries, stream tnb1:c124ed99a66c93f098f7892e962ddba1, pinned to sha256:c124ed99a66c93f098f7892e962ddba140fe7218aed1496e1dcbb0a009e38706
-exit 0
-```
-
-## 4. Tamper with one byte
-
-Each batch file holds consecutive entries, one canonical JSON line each. Here every append made its
-own batch, so entry 3 (the intent) is alone in `000000000003.jsonl`.
+</TabItem>
+<TabItem label="pnpm">
 
 ```sh
-ls audit/support/batches
+pnpm add tenbri@next
 ```
 
-```text
-000000000001.jsonl
-000000000002.jsonl
-000000000003.jsonl
-000000000004.jsonl
-```
-
-Change the ticket number in the intent from `4821` to `4822`, one byte:
+</TabItem>
+<TabItem label="yarn">
 
 ```sh
-perl -pi -e 's#ticket/4821#ticket/4822#' audit/support/batches/000000000003.jsonl
+yarn add tenbri@next
 ```
 
-## 5. Verify again
+</TabItem>
+<TabItem label="bun">
 
 ```sh
-tenbri verify audit/support --key $PIN; echo "exit $?"
+bun add tenbri@next
 ```
 
-```text
-broken at seq 3: bad_signature: the signature does not verify
-2 entries verified before it, stream tnb1:c124ed99a66c93f098f7892e962ddba1
-exit 1
-```
+</TabItem>
+</Tabs>
 
-Reads refuse a broken stream too:
+</TabItem>
+<TabItem label="REST">
+
+`curl` and a `tenbrid` that serves the stream, with a token for you:
 
 ```sh
-tenbri query audit/support --action reply_ticket --key $PIN; echo "exit $?"
+cargo install tenbri-server --version 0.1.0-beta.1 --locked
 ```
 
-```text
-tenbri: the stream does not verify: broken at seq 3: bad_signature: the signature does not verify
-exit 1
-```
+</TabItem>
+</Tabs>
+
+## Steps
+
+<Steps>
+
+1. **Set up a stream to audit.**
+
+   The operator side: a stream with one intent and its outcome.
+
+   ```sh
+   export TENBRI_KEYS=./keys
+   tenbri init audit/support
+   INTENT_ID=$(tenbri append audit/support <<'EOF' | jq -r .id
+   {"kind":"decision","phase":"intent","source":"sdk",
+    "principal":{"kind":"agent","id":"support-assistant"},
+    "action":{"type":"reply_ticket","target":"zendesk:ticket/4821"}}
+   EOF
+   )
+   tenbri append audit/support <<EOF > /dev/null
+   {"kind":"decision","phase":"outcome","source":"sdk","intent":"$INTENT_ID","status":"ok",
+    "principal":{"kind":"agent","id":"support-assistant"},
+    "action":{"type":"reply_ticket","target":"zendesk:ticket/4821"}}
+   EOF
+   ```
+
+   ```text
+   created stream tnb1:db888dbab715e39d31a8b0c7b6bd418a at audit/support
+   stream key fingerprint (pin it): sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe
+   keys: ./keys/tnb1-db888dbab715e39d31a8b0c7b6bd418a
+   verify with: tenbri verify audit/support --key sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe
+   ```
+
+   The fingerprint is what the operator sends you. Keep it in `PIN`:
+
+   ```sh
+   export PIN=sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe
+   ```
+
+2. **Verify without a pin, then with it.**
+
+   The fingerprint is your trust root. Without it, verification can only say the stream agrees
+   with its own genesis key, which anyone who rewrites the whole stream can also produce. The
+   Python and TypeScript scripts below exit with the CLI's codes: 0 verified, 1 broken, 3 not
+   pinned.
+
+   <Tabs syncKey="lang">
+   <TabItem label="CLI">
+
+   ```sh
+   tenbri verify audit/support; echo "exit $?"
+   tenbri verify audit/support --key $PIN; echo "exit $?"
+   ```
+
+   ```text
+   consistent: 4 entries, stream tnb1:db888dbab715e39d31a8b0c7b6bd418a
+   NOT pinned: this only shows the stream agrees with its own genesis key; pass --key <fingerprint>
+   exit 3
+   verified 4 entries, stream tnb1:db888dbab715e39d31a8b0c7b6bd418a, pinned to sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe
+   exit 0
+   ```
+
+   </TabItem>
+   <TabItem label="Python">
+
+   `report.ok` is true only when nothing is broken and the stream was checked against a pinned
+   key.
+
+   ```python title="verify.py"
+   import os
+   import sys
+
+   from tenbri import Tenbri
+
+   with Tenbri.open("./audit/support") as log:
+       report = log.verify(os.environ.get("PIN"))
+
+   print(report)
+   if report.broken:
+       sys.exit(1)  # the stream does not verify
+   if not report.ok:
+       sys.exit(3)  # consistent, but not checked against a pinned key
+   ```
+
+   ```sh
+   env -u PIN python verify.py; echo "exit $?"
+   python verify.py; echo "exit $?"
+   ```
+
+   ```text
+   VerifyReport(stream='tnb1:db888dbab715e39d31a8b0c7b6bd418a', entries=4, pinned_key=None, broken=None, checkpoint=None)
+   exit 3
+   VerifyReport(stream='tnb1:db888dbab715e39d31a8b0c7b6bd418a', entries=4, pinned_key='sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe', broken=None, checkpoint=None)
+   exit 0
+   ```
+
+   </TabItem>
+   <TabItem label="TypeScript">
+
+   `report.ok` is true only when nothing is broken and the stream was checked against a pinned
+   key.
+
+   ```ts title="verify.ts"
+   import { Tenbri } from 'tenbri'
+
+   const log = await Tenbri.open('./audit/support')
+   const report = await log.verify(process.env.PIN)
+   await log.close()
+
+   console.log(report)
+   if (report.broken) process.exit(1) // the stream does not verify
+   if (!report.ok) process.exit(3) // consistent, but not checked against a pinned key
+   ```
+
+   ```sh
+   env -u PIN node verify.ts; echo "exit $?"
+   node verify.ts; echo "exit $?"
+   ```
+
+   ```text
+   {
+     ok: false,
+     stream: 'tnb1:db888dbab715e39d31a8b0c7b6bd418a',
+     entries: 4,
+     pinnedKey: null,
+     broken: null,
+     checkpoint: null
+   }
+   exit 3
+   {
+     ok: true,
+     stream: 'tnb1:db888dbab715e39d31a8b0c7b6bd418a',
+     entries: 4,
+     pinnedKey: 'sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe',
+     broken: null,
+     checkpoint: null
+   }
+   exit 0
+   ```
+
+   </TabItem>
+   <TabItem label="REST">
+
+   `tenbrid` always verifies against the `key` pinned in its configuration, so ask for that pin
+   in `tenbrid.toml` and check that the server's answer names your fingerprint. The operator
+   makes you a token with `tenbrid token` and adds its hash:
+
+   ```toml title="tenbrid.toml"
+   keys = "keys"
+
+   [streams.support]
+   path = "audit/support"
+   key = "sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe"
+
+   [[tokens]]
+   sha256 = "sha256:3d19cdaba826019fd319346560190e1269ccc88f762fa4dc2cdcfbd7b4b8767b"
+   principal = { kind = "person", id = "auditor" }
+   ```
+
+   ```sh
+   tenbrid --config tenbrid.toml
+   ```
+
+   In another terminal:
+
+   ```sh
+   export TENBRI_URL=http://127.0.0.1:7070
+   export TOKEN=tnbt_d0ae9132…   # the token tenbrid printed
+   curl -s $TENBRI_URL/v1/streams/support/verify -H "Authorization: Bearer $TOKEN"
+   curl -s $TENBRI_URL/v1/streams/support/verify -H "Authorization: Bearer $TOKEN" \
+     | jq -e --arg pin "$PIN" '.pinned_key == $pin and .broken == null'; echo "exit $?"
+   ```
+
+   ```text
+   {"stream":"tnb1:db888dbab715e39d31a8b0c7b6bd418a","entries":4,"pinned_key":"sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe"}
+   true
+   exit 0
+   ```
+
+   </TabItem>
+   </Tabs>
+
+3. **Keep a checkpoint.**
+
+   A checkpoint is a signed note of the stream's size and Merkle root. The operator seals one;
+   you keep a copy outside the operator's reach.
+
+   ```sh
+   tenbri checkpoint audit/support
+   cp audit/support/checkpoints/000000000004.note seen.note
+   head -3 seen.note
+   ```
+
+   ```text
+   checkpoint at size 4: checkpoints/000000000004.note
+   tnb1:db888dbab715e39d31a8b0c7b6bd418a
+   4
+   0SREoiNR1ENpnImgPcXhjwWKjv1yTiX3aR+6YMRp57s=
+   ```
+
+   The three lines are the origin (the stream id), the size and the root hash. A blank line and
+   the signature line follow.
+
+   <Tabs syncKey="lang">
+   <TabItem label="CLI">
+
+   Next time, verify against the checkpoint you kept. The stream must still hold exactly the
+   entries it covers:
+
+   ```sh
+   tenbri verify audit/support --key $PIN --checkpoint seen.note; echo "exit $?"
+   ```
+
+   ```text
+   matches checkpoint tnb1:db888dbab715e39d31a8b0c7b6bd418a at size 4
+   matches its latest checkpoint, at size 4
+   verified 4 entries, stream tnb1:db888dbab715e39d31a8b0c7b6bd418a, pinned to sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe
+   exit 0
+   ```
+
+   </TabItem>
+   <TabItem label="Python">
+
+   `verify` checks the stream against its latest checkpoint and reports its size. To compare
+   with the copy you kept, use `tenbri verify --checkpoint` (the CLI tab).
+
+   ```sh
+   python verify.py
+   ```
+
+   ```text
+   VerifyReport(stream='tnb1:db888dbab715e39d31a8b0c7b6bd418a', entries=4, pinned_key='sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe', broken=None, checkpoint=4)
+   ```
+
+   </TabItem>
+   <TabItem label="TypeScript">
+
+   `verify` checks the stream against its latest checkpoint and reports its size. To compare
+   with the copy you kept, use `tenbri verify --checkpoint` (the CLI tab).
+
+   ```sh
+   node verify.ts | grep checkpoint
+   ```
+
+   ```text
+     checkpoint: 4
+   ```
+
+   </TabItem>
+   </Tabs>
+
+4. **Tamper with one byte.**
+
+   Each batch file holds consecutive entries, one canonical JSON line each. Here every append
+   made its own batch, so entry 3 (the intent) is alone in `000000000003.jsonl`.
+
+   ```sh
+   ls audit/support/batches
+   ```
+
+   ```text
+   000000000001.jsonl
+   000000000002.jsonl
+   000000000003.jsonl
+   000000000004.jsonl
+   ```
+
+   Change the ticket number in the intent from `4821` to `4822`, one byte:
+
+   ```sh
+   perl -pi -e 's#ticket/4821#ticket/4822#' audit/support/batches/000000000003.jsonl
+   ```
+
+5. **Verify again.**
+
+   <Tabs syncKey="lang">
+   <TabItem label="CLI">
+
+   ```sh
+   tenbri verify audit/support --key $PIN --checkpoint seen.note; echo "exit $?"
+   ```
+
+   ```text
+   broken at seq 3: bad_signature: the signature does not verify
+   2 entries verified before it, stream tnb1:db888dbab715e39d31a8b0c7b6bd418a
+   exit 1
+   ```
+
+   Reads that check the stream refuse it too. `--verify` makes `query` read the stream itself
+   rather than trust a query index built earlier:
+
+   ```sh
+   tenbri query audit/support --action reply_ticket --key $PIN --verify; echo "exit $?"
+   ```
+
+   ```text
+   tenbri: the stream does not verify: broken at seq 3: bad_signature: the signature does not verify
+   exit 1
+   ```
+
+   </TabItem>
+   <TabItem label="Python">
+
+   ```sh
+   python verify.py; echo "exit $?"
+   ```
+
+   ```text
+   VerifyReport(stream='tnb1:db888dbab715e39d31a8b0c7b6bd418a', entries=2, pinned_key='sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe', broken=Broken(seq=3, code='bad_signature', message='the signature does not verify'), checkpoint=None)
+   exit 1
+   ```
+
+   A stream opened with `key=PIN` refuses reads the same way: `log.query(...)` raises
+   `tenbri.errors.StreamBrokenError: the stream does not verify: broken at seq 3: bad_signature: the
+   signature does not verify`.
+
+   </TabItem>
+   <TabItem label="TypeScript">
+
+   ```sh
+   node verify.ts; echo "exit $?"
+   ```
+
+   ```text
+   {
+     ok: false,
+     stream: 'tnb1:db888dbab715e39d31a8b0c7b6bd418a',
+     entries: 2,
+     pinnedKey: 'sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe',
+     broken: {
+       code: 'bad_signature',
+       message: 'the signature does not verify',
+       seq: 3
+     },
+     checkpoint: null
+   }
+   exit 1
+   ```
+
+   A stream opened with `{ key: PIN }` refuses reads the same way: `log.query(...)` rejects with
+   `StreamBrokenError: the stream does not verify: broken at seq 3: bad_signature: the signature
+   does not verify`.
+
+   </TabItem>
+   <TabItem label="REST">
+
+   `/verify` reads the whole stream from storage again:
+
+   ```sh
+   curl -s $TENBRI_URL/v1/streams/support/verify -H "Authorization: Bearer $TOKEN"
+   curl -s $TENBRI_URL/v1/streams/support/verify -H "Authorization: Bearer $TOKEN" \
+     | jq -e --arg pin "$PIN" '.pinned_key == $pin and .broken == null'; echo "exit $?"
+   ```
+
+   ```text
+   {"stream":"tnb1:db888dbab715e39d31a8b0c7b6bd418a","entries":2,"pinned_key":"sha256:db888dbab715e39d31a8b0c7b6bd418acfe8482508fd345ffcb6d5da23adb6fe","broken":{"seq":3,"code":"bad_signature","message":"the signature does not verify"}}
+   false
+   exit 1
+   ```
+
+   <Aside type="caution">
+   `GET /entries` answers from the entries `tenbrid` read and verified when they were written,
+   so after an edit on disk it still returns the original, `verified` entries. Call `/verify`
+   to check what storage holds now.
+   </Aside>
+
+   </TabItem>
+   </Tabs>
+
+</Steps>
 
 ## What happened
 
 The edit changed the bytes the session key signed, so the signature on entry 3 no longer verifies
-and `verify` reports the first broken entry with exit code 1. A stream signed with another genesis
-key fails your pin. An operator who holds the keys could still truncate or re-sign a rewritten
-stream; the checkpoint you kept catches that for the entries it covers (`truncated`, `fork`),
-which a pin alone cannot.
+and every verifier reports the first broken entry. A stream signed with another genesis key fails
+your pin with `untrusted_root`. An operator who holds the keys could still truncate or re-sign a
+rewritten stream; the checkpoint you kept catches that for the entries it covers (`truncated`,
+`fork`), which a pin alone cannot.
 
-Related: [Integrity](/docs/concepts/integrity/) · [Keys](/docs/concepts/keys/) ·
-[Errors](/docs/reference/errors/) · [CLI reference](/docs/reference/cli/)
+## Related
+
+- [Integrity](/docs/concepts/integrity/)
+- [Keys](/docs/concepts/keys/)
+- [Errors](/docs/reference/errors/)
+- [CLI reference](/docs/reference/cli/)
+- [API reference](/docs/reference/api/)

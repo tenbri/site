@@ -5,15 +5,7 @@ sidebar:
   order: 4
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
-<Aside type="caution" title="Planned">
-The privacy layer is specified (`spec/privacy.md`, provisional) but not in a release yet: blob
-encryption, per-subject keyed digests and erasure, the local key store, and the `tenbri erase` and
-`tenbri keys` commands are all still to come. What works in `0.1.0-alpha.2` is the format: entries
-accept `subject`, `body` and `inputs[].digest`, and they are hashed and signed like every other
-field. Tenbri does not compute digests or encrypt bodies for you yet.
-</Aside>
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## The problem
 
@@ -65,6 +57,11 @@ associated data, so a blob cannot be moved to another stream.
 - A missing blob shows as a missing body, never as a broken chain.
 - Blobs carry no key identifier, so blobs of the same subject cannot be linked by their bytes.
 
+Sealing and opening bodies is in the Rust crate `tenbri-crypt`: `DataKeys::seal_body` seals a body
+under the subject's newest key, stores the blob and returns the address to put in `body`;
+`DataKeys::open_body` reads an entry's blob back, checks its address and opens it. The CLI and the
+Python and TypeScript bindings do not seal bodies.
+
 ## Input digests
 
 Each input in `inputs` is `{ref, version, digest}`. `ref` and `version` are plaintext, so you can
@@ -78,6 +75,57 @@ Without the key, a guessed value (an email address, a short code) cannot be conf
 What the content bytes are (the document, the policy text, the message) is the integration's
 choice, fixed per input `ref`.
 
+In Rust, `DataKeys::digest(subject, content)` computes it under the subject's newest data key, and
+`DataKeys::confirm` checks a digest against every epoch the store still holds.
+
+The Python and TypeScript bindings compute input digests with a `digest_key` (`digestKey`) you
+pass when you open the stream: HMAC-SHA-256 directly under that key, in the same
+`hmac-sha256:` form. That key is yours to keep and to destroy; it is not in the data key store, so
+`tenbri erase` does not touch it.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+from tenbri import Tenbri
+
+log = Tenbri.open("audit/support", create=True, digest_key=b"a 32-byte secret, kept apart....")
+
+with log.run("agent:support-assistant") as run:
+    # The next decision lists this input with its keyed digest.
+    run.read("policy:refund", "14", b"refunds under 50 EUR are automatic")
+    with run.decision("issue_refund", "stripe:ch_123"):
+        pass  # issue the refund here
+
+print(log.digest(b"refunds under 50 EUR are automatic"))
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+import { Tenbri } from 'tenbri'
+
+const log = await Tenbri.open('audit/support', { create: true, digestKey: 'a 32-byte secret, kept apart....' })
+
+await log.run({ principal: 'agent:support-assistant' }, async (run) => {
+  // The next decision lists this input with its keyed digest.
+  run.read('policy:refund', { version: '14', content: 'refunds under 50 EUR are automatic' })
+  await run.decision({ action: 'issue_refund', target: 'stripe:ch_123' }, async () => {
+    // issue the refund here
+  })
+})
+
+console.log(log.digest('refunds under 50 EUR are automatic'))
+```
+
+</TabItem>
+</Tabs>
+
+```text
+hmac-sha256:f9ed1ff2d344efdbd6fef3a3192c28862cce0140989468086a354ccae089dd99
+```
+
 ## Erasure
 
 Erasing a subject deletes every epoch of its data keys. Then:
@@ -88,6 +136,24 @@ Erasing a subject deletes every epoch of its data keys. Then:
 
 Entries without a subject can only be erased tenant-wide, by erasing the tenant's keys.
 
+`tenbri erase` does it. It asks you to type the handle back unless you pass `--yes`:
+
+```sh
+tenbri erase audit/support --subject subj_7f3c91d2 --reason dsr:2026-1042 --by alice --yes
+```
+
+```text
+erased subject subj_7f3c91d2: 2 data key epochs deleted; erasure recorded at seq 7
+```
+
+`--tenant` instead of `--subject` erases the tenant's keys. The stream must verify and this machine
+must hold a key to sign the note before anything is deleted.
+
+The erasure also reaches the [query index](/docs/reference/cli/#index-rebuild): the subject's rows
+are deleted from it, and a rebuild leaves them out. The entries themselves stay in the stream, so a
+query without an index, which reads the whole stream, still lists them; only their bodies and
+input digests are gone.
+
 An erasure is recorded in the stream as a `note` entry, written after the keys are deleted:
 
 | Member | Value |
@@ -97,13 +163,19 @@ An erasure is recorded in the stream as a `note` entry, written after the keys a
 | `action` | `{"type": "tenbri.erase", "target": "<reason>"}`, the reason a reference such as a request id |
 | `principal` | Who asked for it, when known |
 
+This is the note from the command above, as stored:
+
+```json
+{"action":{"target":"dsr:2026-1042","type":"tenbri.erase"},"id":"01M5CWEH12ED41E89A10CKDV1Q","kind":"note","prev":"sha256:e7655243798daca21c8f52475135adbff946ff329bb61b647f3c3155e4e3976f","principal":{"id":"alice","kind":"person"},"seq":7,"sig":"ed25519:4e84ff53…","signer":"sess:2026-10-20:adb9599f29d0","stream":"tnb1:dc736478ac6b04bad25e3a3a6f8d71aa","subject":"subj_7f3c91d2","ts":"2026-10-20T14:46:33.762Z","v":1}
+```
+
 A new key epoch is recorded the same way, with action type `tenbri.key_epoch` and target
 `epoch:<n>`. Action types starting with `tenbri.` are reserved for notes Tenbri writes.
 
 ## The local key store
 
-The spec defines a local key store beside the stream's signing keys, at
-`<keys dir>/<stream id, ':' as '-'>/data/`, never under the stream's directory or bucket prefix:
+Data keys live beside the stream's signing keys, at `<keys dir>/<stream id, ':' as '-'>/data/`,
+never under the stream's directory or bucket prefix:
 
 - one file per subject and epoch, `s-<hex SHA-256 of the handle>.<epoch>.json` (the tenant's:
   `tenant.<epoch>.json`), created exclusively and never rewritten;
@@ -115,17 +187,62 @@ Erasure is immediate on a disk without snapshots. On copy-on-write filesystems, 
 with backups of the key store, old copies survive until those are gone. Keep the key store out of
 the log's versioned or Object Lock bucket and out of its backups.
 
-Key management services and HSMs are not part of format v1.
+A subject's first data key (epoch 1) is made the first time it is needed. Key management services
+and HSMs are not part of format v1.
 
-## What this means today
+## Managing data keys
 
-With `0.1.0-alpha.2`:
+`tenbri keys rotate` starts a new epoch and records it in the stream:
 
-- Keep personal data out of entries. Use pseudonymous `subject` handles and references in
-  `action.target` and `inputs[].ref`. The spec documents `action.target` as possibly personal data.
-- If you set `digest`, compute the HMAC yourself, with a key you keep apart from the log.
-- If you set `body`, the address must have the `blob:ct-sha256:` form; Tenbri does not store or
-  read the blob yet.
+```sh
+tenbri keys rotate audit/support --subject subj_7f3c91d2 --by alice
+```
+
+```text
+subject subj_7f3c91d2: new data key epoch 2, recorded at seq 6
+```
+
+`tenbri keys list` shows the signing keys and, for each subject and the tenant, the epochs held;
+never a secret:
+
+```text
+data keys (<keys dir>/tnb1-dc736478ac6b04bad25e3a3a6f8d71aa/data):
+  subject subj_7f3c91d2: epochs 1..2, newest made 2026-10-20T14:46:33.668Z
+```
+
+`tenbri keys export` prints a subject's keys as JSON for a backup kept apart from the log. With
+`--digest` it prints each epoch's digest key instead: what you hand an auditor to confirm one
+subject's input digests, without opening any body.
+
+```sh
+tenbri keys export audit/support --subject subj_7f3c91d2 --digest
+```
+
+```json
+{
+  "epochs": [
+    {
+      "created": "2026-10-20T14:46:33.624Z",
+      "digest_key": "89cbacb74df0ea3d422ba4ba2451dde06880097043dc449adedd2e684a63ee27",
+      "epoch": 1
+    },
+    {
+      "created": "2026-10-20T14:46:33.668Z",
+      "digest_key": "66bb69500486aecf6a24f7f060376274de859a74f7d4e5a4d893d3d9dcf5fc5a",
+      "epoch": 2
+    }
+  ],
+  "stream": "tnb1:dc736478ac6b04bad25e3a3a6f8d71aa",
+  "subject": "subj_7f3c91d2"
+}
+```
+
+After an erasure, `export` fails with `no data key for subject "subj_7f3c91d2": erased, or never
+held here` (exit 2). Every flag is in the [CLI reference](/docs/reference/cli/#erase).
+
+Whatever tools you use, keep personal data out of the plaintext members. Use pseudonymous `subject`
+handles and references in `action.target` and `inputs[].ref`. The spec documents `action.target`
+as possibly personal data.
 
 ## Next
 

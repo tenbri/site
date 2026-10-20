@@ -1,19 +1,19 @@
 ---
 title: Planned adapters
-description: The agent frameworks Tenbri plans adapters for, and how to record decisions from any framework until then.
+description: "The agent frameworks Tenbri plans adapters for, and how to record a tool call from any framework today, with the CLI, Python, TypeScript or REST."
 sidebar:
-  order: 3
+  order: 4
 ---
 
-import { LinkCard } from '@astrojs/starlight/components';
+import { LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The Tenbri README lists the adapters planned for v0.1.0. None of the others is on `main` yet.
+Three adapters ship today: [Claude Agent SDK](/docs/adapters/claude-agent-sdk/),
+[OpenAI Agents SDK](/docs/adapters/openai-agents/) and
+[LangGraph and LangChain](/docs/adapters/langgraph/). The Tenbri README plans these next for
+v0.1.0:
 
 | Adapter | Planned as |
 | --- | --- |
-| Claude Agent SDK | Stable ([on `main`, unreleased](/docs/adapters/claude-agent-sdk/)) |
-| OpenAI Agents SDK | Stable ([on `main`, unreleased](/docs/adapters/openai-agents/)) |
-| LangGraph and LangChain | Stable |
 | Pydantic AI | Experimental |
 | Vercel AI SDK | Experimental |
 | Mastra | Experimental |
@@ -24,63 +24,224 @@ The Tenbri README lists the adapters planned for v0.1.0. None of the others is o
 | LlamaIndex | Experimental |
 | A2A | Experimental |
 
-**Stable** means covered by the format promise and the 0.x API policy. **Experimental** means
-documented and tested, but free to change in a 0.x minor release.
+**Experimental** means documented and tested, but free to change in a 0.x minor release. The three
+shipped adapters are **Stable**: covered by the format promise and the 0.x API policy.
 
-## Record from any framework today
+## Use Tenbri from any framework today
 
-An adapter only automates what you can do by hand: write an intent before the agent acts, then the
-outcome after. Until your framework has an adapter, call Tenbri from the place where your agent
-runs its tools (a tool wrapper, a middleware, a callback). Keep the same mapping the adapters use:
+An adapter only automates what you can do by hand. Find the place where your agent runs its tools
+(a tool wrapper, a middleware, a callback) and do what the adapters do:
 
-1. Before the tool runs, append an **intent**: `principal` is the agent, `action.type` the tool,
-   `action.target` what it acts on. Do not run the tool if the write fails.
-2. After it runs, append the **outcome** for that intent: `ok`, `error`, or `refused` if a person or
+1. Before the tool runs, write an **intent**: `principal` is the agent, `action.type` the tool,
+   `action.target` what it acts on. If the write fails, do not run the tool.
+2. After it runs, write the **outcome** for that intent: `ok`, `error`, or `refused` if a person or
    a rule stopped it.
-3. If a person approved the call, append an **approval** first and name it from the decision.
+3. If a person approved the call, write an **approval** first and name it from the decision.
 
-See [Streams and entries](/docs/concepts/streams-and-entries/) for the fields and the
-[entry format](/docs/reference/entry-format/) for the exact draft shape. Three ways to write:
+Here is a refund tool, `issue_refund`, wrapped by hand four ways. Each one records the same intent
+and outcome.
 
-### tenbrid over REST
+<Tabs syncKey="lang">
+<TabItem label="CLI">
 
-Run `tenbrid` next to your agent and `POST` intents and outcomes to
-`/v1/streams/{stream}/intents` and `/v1/streams/{stream}/outcomes` with a bearer token. This works
-from any language, and the server checks action schemas.
+For shell-driven agents and scripts. `tenbri append` reads a draft entry on stdin and prints it as
+stored; the script uses `jq` to read the intent's id. A draft for the CLI carries every required
+field, `source` included.
 
-<LinkCard
-  title="tenbrid over REST"
-  href="/docs/examples/tenbrid-rest/"
-  description="Start tenbrid, write an intent and its outcome with curl, retry safely, list, tail and verify."
-/>
+```sh title="refund.sh"
+#!/bin/sh
+# The tool call, wrapped by hand: intent before, outcome after.
+set -e
+export TENBRI_KEYS=./keys
+[ -d ./audit ] || tenbri init ./audit
 
-The [tenbrid API reference](/docs/reference/api/) lists every endpoint.
+intent=$(tenbri append ./audit <<JSON
+{"kind":"decision","phase":"intent","source":"sdk","principal":{"kind":"agent","id":"support"},
+ "action":{"type":"issue_refund","target":"stripe:ch_123"}}
+JSON
+)
+id=$(printf '%s' "$intent" | jq -r .id)
 
-### The CLI
+# Run the tool only once its intent is durable.
+if ./issue-refund ch_123; then status=ok; else status=error; fi
 
-For scripts and shell-driven agents, pipe a draft entry to `tenbri append`, which prints the entry
-as stored:
-
-```sh
-tenbri append ./audit/support < intent.json
+tenbri append ./audit <<JSON
+{"kind":"decision","phase":"outcome","source":"sdk","intent":"$id","status":"$status",
+ "principal":{"kind":"agent","id":"support"},"action":{"type":"issue_refund","target":"stripe:ch_123"}}
+JSON
 ```
 
-See the [CLI reference](/docs/reference/cli/) and the [examples](/docs/examples/).
+```sh
+./refund.sh
+```
 
-### The Rust writer
+```text
+created stream tnb1:e9844e998730d9d861d58dc35778d1b4 at ./audit
+stream key fingerprint (pin it): sha256:e9844e998730d9d861d58dc35778d1b44f53469ad56006182f9b021873687d5c
+keys: ./keys/tnb1-e9844e998730d9d861d58dc35778d1b4
+verify with: tenbri verify ./audit --key sha256:e9844e998730d9d861d58dc35778d1b44f53469ad56006182f9b021873687d5c
+refunded ch_123
+{"action":{"target":"stripe:ch_123","type":"issue_refund"},"id":"01M5CWQSYK9KCVZ324HR4RBH50","intent":"01M5CWQSMZN0TJ32SX8TT6CGBR","kind":"decision","phase":"outcome","prev":"sha256:64200c68…","principal":{"id":"support","kind":"agent"},"seq":4,"sig":"ed25519:17c20512…","signer":"…","source":"sdk","status":"ok","stream":"tnb1:e9844e998730d9d861d58dc35778d1b4","ts":"…","v":1}
+```
 
-If your agent is a Rust program, embed `tenbri-writer` and write entries in process, without the
-CLI or a server.
+`./issue-refund` stands for your tool. A draft the writer refuses prints
+`tenbri: entry rejected: <code>: <detail>` and exits 2, so `set -e` stops before the tool runs: a
+draft without `source`, for example, is rejected with `invalid_field`.
+
+</TabItem>
+<TabItem label="Python">
+
+`intent` raises if the entry cannot be written, so the tool never runs unrecorded. `principal`,
+`action` and `source` of the outcome default to the intent's.
+
+```python title="wrap.py"
+from tenbri import Tenbri
+
+log = Tenbri.open("./audit", create=True)
+
+
+def issue_refund(charge):
+    return f"refunded {charge}"  # your tool
+
+
+def recorded(charge):
+    intent = log.intent(
+        principal="agent:support",
+        action={"type": "issue_refund", "target": f"stripe:{charge}"},
+    )  # durable before the tool runs; raises if it cannot be written
+    try:
+        result = issue_refund(charge)
+    except Exception:
+        log.outcome(intent, "error")
+        raise
+    log.outcome(intent, "ok")
+    return result
+
+
+print(recorded("ch_123"))
+for m in log.query(action="issue_refund"):
+    print(m.entry["seq"], m.entry["phase"], m.entry.get("status", ""), m.entry["action"])
+print("verified:", log.verify(log.fingerprint).ok)
+log.close()
+```
+
+```text
+refunded ch_123
+3 intent  {'target': 'stripe:ch_123', 'type': 'issue_refund'}
+4 outcome ok {'target': 'stripe:ch_123', 'type': 'issue_refund'}
+verified: True
+```
+
+The binding has a shortcut for the same thing, a context manager (and decorator) that records
+`ok`, `error`, or `refused` when the block raises `tenbri.Refused`:
+
+```python
+with log.decision("issue_refund", "stripe:ch_456", principal="agent:support"):
+    issue_refund("ch_456")
+```
+
+With asyncio, `AsyncTenbri` has the same methods as coroutines.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+`intent` rejects if the entry cannot be written, so the tool never runs unrecorded. `principal`,
+`action` and `source` of the outcome default to the intent's.
+
+```ts title="wrap.ts"
+import { Tenbri } from 'tenbri'
+
+const log = await Tenbri.open('./audit', { create: true })
+
+const issueRefund = async (charge: string) => `refunded ${charge}` // your tool
+
+async function recorded(charge: string) {
+  // durable before the tool runs; rejects if it cannot be written
+  const intent = await log.intent({
+    principal: 'agent:support',
+    action: { type: 'issue_refund', target: `stripe:${charge}` },
+  })
+  try {
+    const result = await issueRefund(charge)
+    await log.outcome(intent, 'ok')
+    return result
+  } catch (e) {
+    await log.outcome(intent, 'error')
+    throw e
+  }
+}
+
+console.log(await recorded('ch_123'))
+for (const { entry: e } of await log.query({ action: 'issue_refund' })) console.log(e.seq, e.phase, e.status ?? '', e.action)
+console.log('verified:', (await log.verify(log.fingerprint!)).ok)
+await log.close()
+```
+
+```text
+refunded ch_123
+3 intent  { target: 'stripe:ch_123', type: 'issue_refund' }
+4 outcome ok { target: 'stripe:ch_123', type: 'issue_refund' }
+verified: true
+```
+
+The binding has a shortcut for the same thing, which records `ok`, `error`, or `refused` when the
+callback throws `Refused`:
+
+```ts
+await log.decision({ action: 'issue_refund', target: 'stripe:ch_456', principal: 'agent:support' }, () => issueRefund('ch_456'))
+```
+
+</TabItem>
+<TabItem label="REST">
+
+From any language, through `tenbrid`. Start it with a stream and a token as in
+[tenbrid over REST](/docs/examples/tenbrid-rest/); the token's principal goes on every entry, and
+the server checks action schemas. `curl -f` exits non-zero when the intent is refused, so `set -e`
+stops before the tool runs.
+
+```sh title="refund-rest.sh"
+#!/bin/sh
+set -e
+API=http://127.0.0.1:7070/v1/streams/support
+# The intent: its Idempotency-Key is the entry id, a ULID your client makes, so a retry is safe.
+intent=$(curl -sf -X POST "$API/intents" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: 01K7ZJ4Q3V8M2R6T9W1X5Y7Z0B" \
+  -H "Content-Type: application/json" \
+  -d '{"action":{"type":"issue_refund","target":"stripe:ch_123"}}')
+id=$(printf '%s' "$intent" | jq -r .entry.id)
+
+# Run the tool only once its intent is durable.
+if ./issue-refund ch_123; then status=ok; else status=error; fi
+
+curl -sf -X POST "$API/outcomes" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: 01K7ZJ4R8N2B6C4D9E1F3G5H7K" \
+  -H "Content-Type: application/json" \
+  -d "{\"intent\":\"$id\",\"status\":\"$status\"}"
+```
+
+```sh
+./refund-rest.sh
+```
+
+```text
+refunded ch_123
+{"entry":{"action":{"target":"stripe:ch_123","type":"issue_refund"},"id":"01K7ZJ4R8N2B6C4D9E1F3G5H7K","intent":"01K7ZJ4Q3V8M2R6T9W1X5Y7Z0B","kind":"decision","phase":"outcome","prev":"sha256:39b7833c…","principal":{"id":"support","kind":"agent"},"seq":4,"sig":"ed25519:51d619c6…","signer":"sess:2026-10-20:dbd0e69efa58","source":"sdk","status":"ok","stream":"tnb1:1786a17fc8a9690c394e4c8c00eabfaa","ts":"2026-10-20T14:52:21.574Z","v":1},"replayed":false}
+```
+
+Generate a fresh ULID per entry in your client: the fixed keys here are for the example. Sending
+the same key again returns the original entry with `"replayed":true`.
+
+</TabItem>
+</Tabs>
+
+Then read the stream back with `tenbri tail`, `tenbri verify --key`, or the bindings' `query` and
+`verify`, as on any adapter page. See [Streams and entries](/docs/concepts/streams-and-entries/)
+for the fields and the [entry format](/docs/reference/entry-format/) for the exact draft shape.
 
 <LinkCard
   title="Write from Rust"
   href="/docs/examples/rust-writer/"
-  description="Create a stream, record an intent and its outcome, and verify, from a Rust program."
+  description="If your agent is a Rust program, embed tenbri-writer and write entries in process, without the CLI or a server."
 />
-
-Install the released `tenbri` and `tenbrid` binaries from [Install](/docs/getting-started/install/).
-
-The Python and Node bindings the adapters are built on are also on `main` only: the `tenbri`
-`0.1.0-alpha.2` packages on PyPI and npm predate their API. Built from source as on the
-[Claude Agent SDK page](/docs/adapters/claude-agent-sdk/#install-from-source), they give you the
-same `intent`, `outcome` and `append` calls the adapters use, to write your own.

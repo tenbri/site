@@ -1,78 +1,353 @@
 ---
 title: Claude Agent SDK
-description: Record every tool call of a Claude Agent SDK session as a signed intent, approval and outcome with TenbriHooks.
+description: "Record every tool call of a Claude Agent SDK agent as a signed decision: intent before the tool runs, outcome after, approvals included."
 sidebar:
   order: 1
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-<Aside type="caution" title="Unreleased">
-This adapter is on `main` and not released yet. `pip install tenbri-claude-agent-sdk` and
-`npm install @tenbri/claude-agent-sdk` do not work yet: install it from source as shown below.
-</Aside>
+`TenbriHooks` plugs into the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk). It adds
+its hooks next to yours and wraps your `can_use_tool` (`canUseTool`) callback, so every tool call
+your agent makes becomes a decision in a Tenbri stream: an intent that is durable before the tool
+runs, then its outcome. One line at agent setup, in Python or TypeScript.
 
-`TenbriHooks` adds Tenbri's hooks next to your own in the
-[Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk) options, and wraps your
-`can_use_tool` (`canUseTool` in TypeScript) callback. Every tool call the agent makes becomes a
-decision in a Tenbri stream, with the intent durable before the tool runs.
+## Quick start
 
-## Install from source
+### 1. Install
 
-You need a Rust toolchain (the bindings compile from source), Git, and Python 3.10 or later or
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+Python 3.10 or later.
+
+<Tabs syncKey="py-pkg">
+<TabItem label="pip">
+
+```sh
+pip install --pre tenbri-claude-agent-sdk
+```
+
+</TabItem>
+<TabItem label="uv">
+
+```sh
+uv add --prerelease=allow tenbri-claude-agent-sdk
+```
+
+</TabItem>
+<TabItem label="poetry">
+
+```sh
+poetry add --allow-prereleases tenbri-claude-agent-sdk
+```
+
+</TabItem>
+</Tabs>
+
+This brings the `tenbri` binding and `claude-agent-sdk` 0.1.81 or later.
+
+</TabItem>
+<TabItem label="TypeScript">
+
 Node 20 or later.
+
+<Tabs syncKey="js-pkg">
+<TabItem label="npm">
+
+```sh
+npm install @tenbri/claude-agent-sdk@next tenbri@next @anthropic-ai/claude-agent-sdk
+```
+
+</TabItem>
+<TabItem label="pnpm">
+
+```sh
+pnpm add @tenbri/claude-agent-sdk@next tenbri@next @anthropic-ai/claude-agent-sdk
+```
+
+</TabItem>
+<TabItem label="yarn">
+
+```sh
+yarn add @tenbri/claude-agent-sdk@next tenbri@next @anthropic-ai/claude-agent-sdk
+```
+
+</TabItem>
+<TabItem label="bun">
+
+```sh
+bun add @tenbri/claude-agent-sdk@next tenbri@next @anthropic-ai/claude-agent-sdk
+```
+
+</TabItem>
+</Tabs>
+
+The adapter needs `@anthropic-ai/claude-agent-sdk` 0.2.141 or later. The snippets on this page are
+ES modules with top-level `await`: set `"type": "module"` in `package.json` (`npm pkg set
+type=module`).
+
+</TabItem>
+</Tabs>
+
+### 2. Add the hooks
+
+Open a stream, then pass your options through `instrument`:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="agent.py"
+import asyncio
+from claude_agent_sdk import ClaudeAgentOptions, query
+from tenbri import AsyncTenbri
+from tenbri_claude_agent_sdk import TenbriHooks
+
+
+async def main():
+    log = await AsyncTenbri.open("./audit", create=True)
+    options = TenbriHooks(log, "agent:docs").instrument(
+        ClaudeAgentOptions(allowed_tools=["Read"])
+    )
+    async for message in query(prompt="Summarize README.md", options=options):
+        print(type(message).__name__)
+    print("pin this:", log.fingerprint)
+    await log.close()
+
+
+asyncio.run(main())
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="agent.ts"
+import { query } from '@anthropic-ai/claude-agent-sdk'
+import { Tenbri } from 'tenbri'
+import { TenbriHooks } from '@tenbri/claude-agent-sdk'
+
+const log = await Tenbri.open('./audit', { create: true })
+const options = new TenbriHooks(log, { principal: 'agent:docs' }).instrument({
+  allowedTools: ['Read'],
+})
+for await (const message of query({ prompt: 'Summarize README.md', options })) {
+  console.log(message.type)
+}
+console.log('pin this:', log.fingerprint)
+await log.close()
+```
+
+</TabItem>
+</Tabs>
+
+`create=True` makes the stream and its signing keys the first time. The keys go to `$TENBRI_KEYS`,
+else `~/.config/tenbri/keys`, never into the stream. See [keys](/docs/concepts/keys/).
+
+### 3. Run it
+
+With `ANTHROPIC_API_KEY` set:
 
 <Tabs syncKey="lang">
 <TabItem label="Python">
 
 ```sh
-git clone https://github.com/tenbri/tenbri
-cd tenbri
-python -m pip install ./bindings/python ./adapters/claude-agent-sdk/python
+python agent.py
 ```
 
-This installs the `tenbri` binding, `tenbri-claude-agent-sdk`, and `claude-agent-sdk` 0.1.81 or
-later. For trace ids on entries, also install `opentelemetry-api`.
+```text
+SystemMessage
+ResultMessage
+pin this: sha256:92b0502e518e00fa89303dadd90c320ce4cf3edcb1ce775894b36eefa43ef7d8
+```
 
 </TabItem>
 <TabItem label="TypeScript">
 
-Build the Node binding, then build and pack the adapter:
+Node 22.18 or later runs `.ts` files as they are; on Node 20, use `npx tsx agent.ts`.
 
 ```sh
-git clone https://github.com/tenbri/tenbri
-cd tenbri/bindings/node
-npm ci && npx napi build --platform
-cd ../../adapters/claude-agent-sdk/typescript
-npm ci && npm run build && npm pack
+node agent.ts
 ```
 
-Then, in your project (replace `/path/to/tenbri` with your clone):
-
-```sh
-npm install /path/to/tenbri/bindings/node \
-  /path/to/tenbri/adapters/claude-agent-sdk/typescript/tenbri-claude-agent-sdk-0.0.0.tgz \
-  @anthropic-ai/claude-agent-sdk
+```text
+system
+result
+pin this: sha256:97e1353cd287b441758829c15ba5d44db5b6c5c1d3d7db392e604f9184560468
 ```
-
-The binding is installed as a link to your clone, so keep the clone. The adapter needs
-`@anthropic-ai/claude-agent-sdk` 0.2.141 or later. For trace ids on entries, also install
-`@opentelemetry/api` and a context manager.
 
 </TabItem>
 </Tabs>
 
-## A minimal example
+This output comes from a run against the repository's stand-in for the Claude Code CLI (see
+[testing offline](#test-your-agent-offline)), which plays one `Read` of `README.md`. A real model
+prints more messages. Keep the fingerprint: it is what you verify against.
 
-A support agent with one tool, `issue_refund`, served from an in-process MCP server. The tool asks
-a person first; their answer is recorded as an approval. `describe` turns the tool call into the
-decision's action, target and rule. This is the repository's refund example, shortened.
+### 4. See the entries
+
+<Tabs syncKey="lang">
+<TabItem label="CLI">
+
+```sh
+tenbri tail ./audit -n 2 --no-follow
+```
+
+```text
+{"action":{"target":"README.md","type":"Read"},"durability":"local","id":"01M5CWFTGBDZS46Y6YC8H1ATHP","kind":"decision","phase":"intent","prev":"sha256:ad1e54e9…","principal":{"id":"docs","kind":"agent"},"seq":3,"sig":"ed25519:f2f84f83…","signer":"sess:2026-10-20:ee77f0d7924b","source":"sdk","stream":"tnb1:92b0502e518e00fa89303dadd90c320c","ts":"2026-10-20T14:47:16.239Z","v":1}
+{"action":{"target":"README.md","type":"Read"},"id":"01M5CWFTH019TW474GKBVJ3R1G","intent":"01M5CWFTGBDZS46Y6YC8H1ATHP","kind":"decision","phase":"outcome","prev":"sha256:30bee3fa…","principal":{"id":"docs","kind":"agent"},"seq":4,"sig":"ed25519:c2b823e4…","signer":"sess:2026-10-20:ee77f0d7924b","source":"sdk","status":"ok","stream":"tnb1:92b0502e518e00fa89303dadd90c320c","ts":"2026-10-20T14:47:16.259Z","v":1}
+```
+
+```sh
+tenbri verify ./audit --key sha256:92b0502e…   # your full fingerprint
+```
+
+```text
+verified 4 entries, stream tnb1:92b0502e518e00fa89303dadd90c320c, pinned to sha256:92b0502e518e00fa89303dadd90c320ce4cf3edcb1ce775894b36eefa43ef7d8
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python title="read.py"
+import asyncio
+import sys
+from tenbri import AsyncTenbri
+
+
+async def main(fingerprint):
+    # key: the fingerprint you pinned when the stream was created
+    log = await AsyncTenbri.open("./audit", key=fingerprint)
+    report = await log.verify()
+    print("ok:", report.ok, "entries:", report.entries)
+    for m in await log.query(principal="agent:docs"):
+        e = m.entry
+        print(m.verification, e["seq"], e["phase"], e.get("status", ""), e["action"])
+    await log.close()
+
+
+asyncio.run(main(sys.argv[1]))
+```
+
+```sh
+python read.py sha256:92b0502e…   # your full fingerprint
+```
+
+```text
+ok: True entries: 4
+verified 3 intent  {'target': 'README.md', 'type': 'Read'}
+verified 4 outcome ok {'target': 'README.md', 'type': 'Read'}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="read.ts"
+import { Tenbri } from 'tenbri'
+
+// key: the fingerprint you pinned when the stream was created
+const log = await Tenbri.open('./audit', { key: process.argv[2] })
+const report = await log.verify()
+console.log('ok:', report.ok, 'entries:', report.entries)
+for (const { verification, entry: e } of await log.query({ principal: 'agent:docs' })) {
+  console.log(verification, e.seq, e.phase, e.status ?? '', e.action)
+}
+await log.close()
+```
+
+```sh
+node read.ts sha256:97e1353c…   # your full fingerprint
+```
+
+```text
+ok: true entries: 4
+verified 3 intent  { target: 'README.md', type: 'Read' }
+verified 4 outcome ok { target: 'README.md', type: 'Read' }
+```
+
+</TabItem>
+</Tabs>
+
+Entries 1 and 2 are the stream's key entries. Entry 3 is the intent, written before `Read` ran;
+entry 4 is its outcome. The file's path is recorded as the target; its contents are not.
+
+## Configuration
+
+`TenbriHooks(log, principal, ...)` in Python (options are keyword arguments),
+`new TenbriHooks(log, { principal, ... })` in TypeScript.
+
+| Python | TypeScript | Default | What it does |
+| --- | --- | --- | --- |
+| `principal` | `principal` | required | The agent, for example `"agent:support"`. |
+| `tools` | `tools` | every tool | Names to record, or a predicate of the tool name. Other tools run unrecorded. |
+| `describe` | `describe` | `default_describe` / `defaultDescribe` | `(tool, input)` to the intent's fields: `target`, `inputs` (each `{ref, version, digest}`), `rule`, `subject`, or `action` to rename the action. Return `None` / `undefined` for no extra fields. The default records only the target of file and web tools (`file_path`, `notebook_path`, `path`, `url`). |
+| `approver` | `approver` | none | Who approves through `can_use_tool`: a principal such as `"person:alice"`, or a function of the call returning one. Leave it unset when your own code decides and no person approves. |
+| `fail_open` | `failOpen` | `False` / `false` | Let a tool run, unrecorded, when its intent could not be written. A warning is logged. |
+| `timeout` | `timeout` | `2.0` seconds / `2000` ms | How long the intent (or approval) may take to become durable before the tool is denied (or runs, with `fail_open`). |
+
+Methods and exports:
+
+- `instrument(options)` returns your options with Tenbri's hooks appended to yours (`PreToolUse`,
+  `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`) and your `can_use_tool` wrapped.
+- `hooks.can_use_tool(fn)` (`hooks.canUseTool(fn)`) wraps a permission callback on its own, if you
+  build options another way.
+- `entry_hash(entry)` (`entryHash`) is the hash an `approval` member names.
+
+A `describe` for an MCP tool, renaming the action and recording a target and the rule that allowed
+it:
 
 <Tabs syncKey="lang">
 <TabItem label="Python">
 
 ```python
+def describe(tool, tool_input):
+    if tool == "mcp__billing__issue_refund":
+        return {
+            "action": "issue_refund",
+            "target": f"stripe:{tool_input['charge']}",
+            "rule": {"ref": "policy:refund", "version": "14", "result": "allow"},
+        }
+    return None
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+const describe = (name: string, input: Record<string, unknown>) =>
+  name === 'mcp__billing__issue_refund'
+    ? { action: 'issue_refund', target: `stripe:${input.charge}`, rule: { ref: 'policy:refund', version: '14', result: 'allow' } }
+    : undefined
+```
+
+</TabItem>
+</Tabs>
+
+For trace ids on entries, install OpenTelemetry: `pip install --pre "tenbri-claude-agent-sdk[otel]"`
+in Python, `@opentelemetry/api` and a context manager in TypeScript. Each entry then carries the
+active span's `trace`.
+
+## Approvals
+
+The SDK calls your `can_use_tool` when a tool needs permission. The adapter wraps it and records
+what was answered:
+
+| Your callback returns | With an `approver` | Without one |
+| --- | --- | --- |
+| Allow | An `approval` entry by the approver, for the same action. The tool's outcome names it in `approval: {by, entry}`. | Nothing extra: your code decided, not a person. |
+| Deny | The intent's outcome is `refused`. | The same. |
+
+A denial outside `can_use_tool` (a permission rule, auto mode) reaches the `PermissionDenied` hook
+and is also `refused`. Tools that never ask get an intent and an outcome, with no approval. If the
+approval cannot be written, the tool is denied (unless `fail_open`).
+
+A support agent whose refund tool asks a person first. Keep the streamed prompt: older SDK releases
+call `can_use_tool` only with one.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="refund.py"
 import asyncio
+import os
 from claude_agent_sdk import (
     ClaudeAgentOptions, PermissionResultAllow, PermissionResultDeny,
     create_sdk_mcp_server, query, tool,
@@ -87,6 +362,7 @@ async def issue_refund(args):
 
 
 async def ask(tool, tool_input, ctx):
+    # Your permission prompt: a person answers.
     answer = await asyncio.to_thread(input, f"Allow {tool} {tool_input}? [y/N] ")
     return PermissionResultAllow() if answer.lower() == "y" else PermissionResultDeny(message="no")
 
@@ -107,9 +383,8 @@ async def prompt():  # can_use_tool needs a streamed prompt
 
 
 async def main():
-    log = await AsyncTenbri.open(
-        "./audit/support", create=True, digest_key=b"a 32-byte secret, kept apart...."
-    )
+    digest_key = os.environ["TENBRI_DIGEST_KEY"].encode()
+    log = await AsyncTenbri.open("./audit", create=True, digest_key=digest_key)
     hooks = TenbriHooks(log, "agent:support", describe=describe, approver="person:alice")
     options = hooks.instrument(ClaudeAgentOptions(
         mcp_servers={"billing": create_sdk_mcp_server("billing", tools=[issue_refund])},
@@ -119,20 +394,39 @@ async def main():
     async for message in query(prompt=prompt(), options=options):
         print(type(message).__name__)
 
-    print("verified:", (await log.verify(log.fingerprint)).ok)
     for m in await log.query(action="issue_refund"):
         e = m.entry
-        print(e["seq"], e.get("phase"), e.get("status", ""), e["action"], e.get("approval", ""))
+        who = f"{e['principal']['kind']}:{e['principal']['id']}"
+        print(e["seq"], e["kind"], e.get("phase", ""), e.get("status", ""), who, e.get("approval", {}).get("entry", ""))
     await log.close()
 
 
 asyncio.run(main())
 ```
 
+Answered `y`:
+
+```text
+SystemMessage
+Allow mcp__billing__issue_refund {'charge': 'ch_123', 'amount_eur': 30}? [y/N] ResultMessage
+3 decision intent  agent:support
+4 approval   person:alice
+5 decision outcome ok agent:support sha256:bcd93166…
+```
+
+Answered `n`:
+
+```text
+SystemMessage
+Allow mcp__billing__issue_refund {'charge': 'ch_123', 'amount_eur': 30}? [y/N] ResultMessage
+3 decision intent  agent:support
+4 decision outcome refused agent:support
+```
+
 </TabItem>
 <TabItem label="TypeScript">
 
-```ts
+```ts title="refund.ts"
 import { createInterface } from 'node:readline/promises'
 import { createSdkMcpServer, query, tool, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { Tenbri } from 'tenbri'
@@ -148,6 +442,7 @@ const billing = createSdkMcpServer({
   ],
 })
 
+// Your permission prompt: a person answers.
 const ask: CanUseTool = async (name, input) => {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   const answer = await rl.question(`Allow ${name} ${JSON.stringify(input)}? [y/N] `)
@@ -161,10 +456,10 @@ async function* prompt(): AsyncGenerator<SDKUserMessage> {
   yield { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: '' }
 }
 
-const log = await Tenbri.open('./audit/support', { create: true, digestKey: 'a 32-byte secret, kept apart....' })
+const log = await Tenbri.open('./audit', { create: true, digestKey: process.env.TENBRI_DIGEST_KEY })
 const hooks = new TenbriHooks(log, {
   principal: 'agent:support',
-  approver: 'person:alice',
+  approver: 'person:alice', // who answers the prompt
   describe: (name, input) =>
     name === 'mcp__billing__issue_refund'
       ? { action: 'issue_refund', target: `stripe:${input.charge}`, rule: { ref: 'policy:refund', version: '14', result: 'allow' } }
@@ -177,139 +472,363 @@ const options = hooks.instrument({
 })
 for await (const message of query({ prompt: prompt(), options })) console.log(message.type)
 
-console.log('verified:', (await log.verify(log.fingerprint ?? undefined)).ok)
 for (const { entry: e } of await log.query({ action: 'issue_refund' })) {
-  console.log(e.seq, e.phase, e.status ?? '', e.action, e.approval ?? '')
+  console.log(e.seq, e.kind, e.phase ?? '', e.status ?? '', `${e.principal?.kind}:${e.principal?.id}`, e.approval ?? '')
 }
 await log.close()
 ```
 
-The example uses `zod` for the tool's schema: `npm install zod`.
+`zod` comes with the SDK; add it to your dependencies if you import it (`npm install zod`).
+Answered `y`:
+
+```text
+system
+Allow mcp__billing__issue_refund {"charge":"ch_123","amount_eur":30}? [y/N] result
+3 decision intent  agent:support
+4 approval   person:alice
+5 decision outcome ok agent:support {
+  by: { id: 'alice', kind: 'person' },
+  entry: 'sha256:456c771a…'
+}
+```
+
+Answered `n`:
+
+```text
+system
+Allow mcp__billing__issue_refund {"charge":"ch_123","amount_eur":30}? [y/N] result
+3 decision intent  agent:support
+4 decision outcome refused agent:support
+```
 
 </TabItem>
 </Tabs>
 
-Run against the real SDK, the agent needs `ANTHROPIC_API_KEY`. The output below comes from the
-Python example run against `testing/fake-claude.mjs`, the repository's stand-in for the Claude Code
-CLI that the adapter's tests use (no model, no API key), with one `issue_refund` call that asks
-first, answered `y`. The approver was the local user, `person:amine`:
+`approver` can also be a function of the call (`(tool, input, context)` in Python, `(tool, input,
+options)` in TypeScript) that returns who answered, for example the user signed in to your app.
 
-```text
-SystemMessage
-Allow mcp__billing__issue_refund {'charge': 'ch_123', 'amount_eur': 30}? [y/N] ResultMessage
-verified: True
-3 intent  {'target': 'stripe:ch_123', 'type': 'issue_refund'}
-4 None  {'target': 'stripe:ch_123', 'type': 'issue_refund'}
-5 outcome ok {'target': 'stripe:ch_123', 'type': 'issue_refund'} {'by': {'id': 'amine', 'kind': 'person'}, 'entry': 'sha256:2c683f20…'}
+## Choose where entries go
+
+The stream is wherever `open` points. The adapter does not change; only the URL does.
+
+| Location | URL | Credentials |
+| --- | --- | --- |
+| A local directory | `./audit` or `file:///var/lib/audit/support` | none |
+| AWS S3, MinIO | `s3://bucket/prefix` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`; `AWS_ENDPOINT_URL` (and `AWS_ALLOW_HTTP=true` for plain HTTP) for MinIO |
+| Cloudflare R2 | `r2://bucket/prefix` | `CLOUDFLARE_ACCOUNT_ID`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+log = await AsyncTenbri.open("s3://acme-audit/tenbri/docs", create=True)
 ```
 
-Entries 1 and 2 are the stream's key entries. Entry 4 is the approval (it has no phase).
+</TabItem>
+<TabItem label="TypeScript">
 
-## Options
+```ts
+const log = await Tenbri.open('s3://acme-audit/tenbri/docs', { create: true })
+```
 
-`TenbriHooks(log, principal, ...)` in Python, `new TenbriHooks(log, { principal, ... })` in
-TypeScript.
+</TabItem>
+</Tabs>
 
-| Python | TypeScript | Default | What it does |
-| --- | --- | --- | --- |
-| `principal` | `principal` | required | The agent, for example `"agent:support"`. |
-| `tools` | `tools` | every tool | Names to record, or a predicate of the tool name. |
-| `describe` | `describe` | `default_describe` / `defaultDescribe` | `(tool, input)` to the intent's fields: `target`, `inputs` (`{ref, version, digest}`), `rule`, `subject`, or `action` to rename the action. The default records only the target of the file and web tools (`file_path`, `notebook_path`, `path`, `url`). |
-| `approver` | `approver` | none | Who approves through `can_use_tool`: a principal such as `"person:alice"`, or a function of the call returning one. Leave it unset when your own code decides and no person approves. |
-| `fail_open` | `failOpen` | `False` / `false` | Let a tool run, unrecorded, when its intent could not be written. A warning is logged. |
-| `timeout` | `timeout` | `2.0` seconds / `2000` ms | How long the intent may take to become durable before the tool fails closed (or runs, with `fail_open`). |
+Run against a local MinIO, the quick start wrote the same two decisions, now with
+`"durability":"replicated"`. Signing keys stay on the machine that writes; only entries go to the
+bucket. See [Storage](/docs/reference/storage/) for every variable.
 
-`instrument(options)` returns your options with Tenbri's hooks added to yours (`PreToolUse`,
-`PostToolUse`, `PostToolUseFailure`, `PermissionDenied`) and your `can_use_tool` wrapped. If you
-build options another way, `hooks.can_use_tool(fn)` (`hooks.canUseTool(fn)`) wraps a callback on
-its own. The module also exports `entry_hash` (`entryHash`), the hash an `approval` member names.
+The bindings do not write through a `tenbrid` server. To send entries to `tenbrid` over REST, record
+by hand as shown in [Use Tenbri from any framework](/docs/adapters/planned/#use-tenbri-from-any-framework-today).
+
+## Read back and verify
+
+Anyone with read access to the stream and its fingerprint can check it; no keys needed. Pin the
+fingerprint you got at creation: verifying without one only shows that the stream agrees with its
+own first key.
+
+<Tabs syncKey="lang">
+<TabItem label="CLI">
+
+```sh
+tenbri verify ./audit --key sha256:92b0502e…               # the whole stream
+tenbri query ./audit --principal agent:docs --key sha256:92b0502e…
+tenbri tail ./audit --key sha256:92b0502e…                 # follow new entries
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+log = await AsyncTenbri.open("./audit", key="sha256:92b0502e…")
+report = await log.verify()                     # report.ok, report.entries, report.broken
+refunds = await log.query(action="issue_refund", target="stripe:ch_123")
+by_input = await log.query(inputs=["claude:tool_input@toolu_01"])
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+const log = await Tenbri.open('./audit', { key: 'sha256:92b0502e…' })
+const report = await log.verify() // report.ok, report.entries, report.broken
+const refunds = await log.query({ action: 'issue_refund', target: 'stripe:ch_123' })
+const byInput = await log.query({ inputs: ['claude:tool_input@toolu_01'] })
+```
+
+</TabItem>
+</Tabs>
+
+`query` filters by `action`, `target`, `principal`, `subject` and `inputs` (`"ref@version"`), with
+`after_seq` (`afterSeq`) and `limit`. Each match carries `verification`: `verified` when a key is
+pinned, `unpinned` when not. See the [CLI reference](/docs/reference/cli/).
+
+## Test your agent offline
+
+The adapter's own tests run the real SDK against `testing/fake-claude.mjs`, a stand-in for the
+Claude Code CLI: no model, no API key, no cost. Copy it into your tests and point the SDK at it.
+It needs Node on the `PATH`.
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/tenbri/tenbri/main/adapters/claude-agent-sdk/testing/fake-claude.mjs
+chmod +x fake-claude.mjs
+```
+
+`FAKE_CLAUDE_SCENARIO` is a JSON array of the tool calls to play, after the first user message:
+
+| Field | Meaning |
+| --- | --- |
+| `tool`, `input`, `id` | The tool name, its input, and the tool use id |
+| `ask` | `true` to call your `can_use_tool` before running it |
+| `result` | `"ok"`, `"error"`, `"interrupt"`, `"denied"` (a permission rule denies it) or `"crash"` (the CLI dies after `PreToolUse`) |
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="test_agent.py"
+import asyncio
+import json
+from pathlib import Path
+
+from claude_agent_sdk import ClaudeAgentOptions, query
+from tenbri import AsyncTenbri
+from tenbri_claude_agent_sdk import TenbriHooks
+
+FAKE = Path(__file__).parent / "fake-claude.mjs"  # copied from the Tenbri repository
+
+
+async def run_agent(log, calls):
+    """Runs the real SDK against the fake CLI, which plays `calls` as the model's tool calls."""
+    options = TenbriHooks(log, "agent:docs").instrument(ClaudeAgentOptions(
+        cli_path=str(FAKE),
+        env={"FAKE_CLAUDE_SCENARIO": json.dumps(calls)},
+    ))
+    async for _ in query(prompt="Summarize README.md", options=options):
+        pass
+
+
+def test_each_tool_call_is_recorded(tmp_path):
+    async def main():
+        log = await AsyncTenbri.open(tmp_path / "audit", keys=tmp_path / "keys", create=True)
+        await run_agent(log, [
+            {"tool": "Read", "input": {"file_path": "README.md"}, "id": "t1", "result": "ok"},
+            {"tool": "Bash", "input": {"command": "make"}, "id": "t2", "result": "error"},
+        ])
+        entries = [m.entry for m in await log.query(principal="agent:docs")]
+        assert [(e["action"]["type"], e["phase"], e.get("status")) for e in entries] == [
+            ("Read", "intent", None),
+            ("Read", "outcome", "ok"),
+            ("Bash", "intent", None),
+            ("Bash", "outcome", "error"),
+        ]
+        assert entries[0]["action"]["target"] == "README.md"
+        assert "target" not in entries[2]["action"]  # the command is never stored
+        assert (await log.verify(log.fingerprint)).ok
+        await log.close()
+
+    asyncio.run(main())
+```
+
+```sh
+python -m pytest -q test_agent.py
+```
+
+```text
+.                                                                        [100%]
+1 passed in 0.73s
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="agent.test.ts"
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { query } from '@anthropic-ai/claude-agent-sdk'
+import { Tenbri } from 'tenbri'
+import { TenbriHooks } from '@tenbri/claude-agent-sdk'
+
+const FAKE = fileURLToPath(new URL('./fake-claude.mjs', import.meta.url)) // copied from the Tenbri repository
+
+/** Runs the real SDK against the fake CLI, which plays `calls` as the model's tool calls. */
+async function runAgent(log: Tenbri, calls: object[]) {
+  const options = new TenbriHooks(log, { principal: 'agent:docs' }).instrument({
+    pathToClaudeCodeExecutable: FAKE,
+    executable: 'node',
+    env: { ...process.env, FAKE_CLAUDE_SCENARIO: JSON.stringify(calls) },
+  })
+  for await (const _ of query({ prompt: 'Summarize README.md', options })) {
+  }
+}
+
+test('each tool call is recorded', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'audit-'))
+  const log = await Tenbri.open(join(dir, 'audit'), { keys: join(dir, 'keys'), create: true })
+  await runAgent(log, [
+    { tool: 'Read', input: { file_path: 'README.md' }, id: 't1', result: 'ok' },
+    { tool: 'Bash', input: { command: 'make' }, id: 't2', result: 'error' },
+  ])
+  const entries = (await log.query({ principal: 'agent:docs' })).map((m) => m.entry)
+  assert.deepEqual(
+    entries.map((e) => [e.action?.type, e.phase, e.status]),
+    [
+      ['Read', 'intent', undefined],
+      ['Read', 'outcome', 'ok'],
+      ['Bash', 'intent', undefined],
+      ['Bash', 'outcome', 'error'],
+    ],
+  )
+  assert.equal(entries[0].action?.target, 'README.md')
+  assert.ok((await log.verify(log.fingerprint!)).ok)
+  await log.close()
+})
+```
+
+```sh
+node --test agent.test.ts
+```
+
+```text
+✔ each tool call is recorded (198.196042ms)
+ℹ tests 1
+ℹ pass 1
+ℹ fail 0
+```
+
+</TabItem>
+</Tabs>
+
+Open test streams with `keys=` (`keys:`) in a temporary directory, so tests never touch your real
+keys directory.
+
+## Troubleshooting
+
+When the adapter blocks a tool, the agent receives the reason as the hook's denial, so it shows up
+in the model's transcript.
+
+| Message | Cause | What to do |
+| --- | --- | --- |
+| `Tenbri could not record the intent, so Read is blocked: closed` | The stream was closed before the agent ran. | Keep the stream open for the whole session; close it after `query` finishes. |
+| `Tenbri could not record the intent, so Read is blocked: read-only: no stream key for tnb1:… in …/keys` | The stream opened read-only: its keys are not in this keys directory. | Set `TENBRI_KEYS` (or pass `keys=`) to the directory the stream was created with. Check `log.writable`. |
+| `Tenbri could not record the intent, so Read is blocked: not durable within 2000 ms` (TypeScript); the same with nothing after the colon (Python) | The write took longer than `timeout`, often a slow bucket. | Raise `timeout`, or move the stream closer to the agent. |
+| `Tenbri could not record the approval: …` | The approval entry could not be written, so the allowed tool is denied and recorded `refused`. | Same causes as above. |
+| `tenbri: Read runs unrecorded (fail-open): closed` (a warning) | `fail_open` is on and the intent could not be written; the tool ran. | Fix the stream; the call is not in the record. |
+| `tenbri.errors.NotFoundError: no stream at ./audit: ./audit is not a directory` | `open` without `create` on a path with no stream. | Pass `create=True` (`create: true`) the first time, or fix the path. |
+| `can_use_tool` is never called | The tool was allowed by settings, or (on older SDKs) the prompt was a string. | Pass a streamed prompt, as in [Approvals](#approvals). |
+| The intent has no `inputs` | The stream was opened without a digest key. | Open it with `digest_key` (`digestKey`) to pin each tool input by keyed digest. |
+
+If the process dies after `PreToolUse`, no outcome is written. The next writer of the stream
+records the open intent as `unknown`. An outcome that cannot be written is logged
+(`the ok outcome of … was not recorded`), not retried: the tool already ran.
 
 ## What is written
 
 | SDK event | Entry |
 | --- | --- |
-| `PreToolUse` | An `intent`: principal the agent, `action.type` the tool name, `action.target` from `describe`. Durable before the tool runs. |
+| `PreToolUse` | An `intent`: `principal` the agent, `action.type` the tool name, `action.target` from `describe`. Durable before the tool runs. |
 | `can_use_tool` allows, with an `approver` | An `approval` by that person, for the same action |
 | `PostToolUse` | The outcome `ok`, naming the approval if there was one |
 | `PostToolUseFailure` | The outcome `error`, or `unknown` when the tool was interrupted |
 | `can_use_tool` denies, or `PermissionDenied` | The outcome `refused` |
 
-Nothing of the prompt, the tool input or the tool output is stored. When the stream was opened with
-a digest key (`digest_key` / `digestKey`), the intent pins the tool input by its keyed digest, as an
-input with `ref` `claude:tool_input` and the tool use id as its `version`. The intent from the run
-above, as stored (signatures and hashes shortened):
+Nothing of the prompt, the tool input or the tool output is stored. When the stream is opened with a
+digest key, the intent pins the tool input by its keyed digest, as an input with `ref`
+`claude:tool_input` and the tool use id as its `version`. Whoever holds the input and the key can
+prove what the agent sent.
+
+The three entries of the approved refund above, as stored (signatures and hashes shortened):
 
 ```json
 {
   "action": { "target": "stripe:ch_123", "type": "issue_refund" },
   "durability": "local",
-  "id": "01M5CTZ8S4YM4J0WC0H2SCM6GB",
+  "id": "01M5CWGDHVKXBD3SGXC6BPKSTZ",
   "inputs": [
-    { "digest": "hmac-sha256:2a187720…", "ref": "claude:tool_input", "version": "toolu_1" }
+    { "digest": "hmac-sha256:2a187720…", "ref": "claude:tool_input", "version": "toolu_01" }
   ],
   "kind": "decision",
   "phase": "intent",
-  "prev": "sha256:8e7eb3a5…",
+  "prev": "sha256:a4aeb42f…",
   "principal": { "id": "support", "kind": "agent" },
   "rule": { "ref": "policy:refund", "result": "allow", "version": "14" },
   "seq": 3,
-  "sig": "ed25519:1a0e0a0d…",
-  "signer": "sess:2026-10-20:eb5b321da226",
+  "sig": "ed25519:d676d914…",
+  "signer": "sess:2026-10-20:38719356a4d6",
   "source": "sdk",
-  "stream": "tnb1:418899aacf36e8ee797962cce403e2db",
-  "ts": "2026-10-20T14:20:45.224Z",
+  "stream": "tnb1:72187e596c0a412f1cd1f397a0add532",
+  "ts": "2026-10-20T14:47:35.742Z",
   "v": 1
 }
 ```
 
-And the outcome, trimmed to its decision fields, which names the approval at `seq` 4 by its entry
-hash:
+```json
+{
+  "action": { "target": "stripe:ch_123", "type": "issue_refund" },
+  "id": "01M5CWGDJJ5QTGN99T9HM9RBF6",
+  "kind": "approval",
+  "prev": "sha256:0219e939…",
+  "principal": { "id": "alice", "kind": "person" },
+  "seq": 4,
+  "sig": "ed25519:572c2f6d…",
+  "signer": "sess:2026-10-20:38719356a4d6",
+  "stream": "tnb1:72187e596c0a412f1cd1f397a0add532",
+  "ts": "2026-10-20T14:47:35.765Z",
+  "v": 1
+}
+```
 
 ```json
 {
   "action": { "target": "stripe:ch_123", "type": "issue_refund" },
   "approval": {
-    "by": { "id": "amine", "kind": "person" },
-    "entry": "sha256:2c683f20…"
+    "by": { "id": "alice", "kind": "person" },
+    "entry": "sha256:bcd93166…"
   },
-  "intent": "01M5CTZ8S4YM4J0WC0H2SCM6GB",
+  "id": "01M5CWGDK9PB3P8KVXG3D5CB9D",
+  "intent": "01M5CWGDHVKXBD3SGXC6BPKSTZ",
   "kind": "decision",
   "phase": "outcome",
+  "prev": "sha256:bcd93166…",
   "principal": { "id": "support", "kind": "agent" },
   "seq": 5,
+  "sig": "ed25519:ef0fc38c…",
+  "signer": "sess:2026-10-20:38719356a4d6",
   "source": "sdk",
-  "status": "ok"
+  "status": "ok",
+  "stream": "tnb1:72187e596c0a412f1cd1f397a0add532",
+  "ts": "2026-10-20T14:47:35.788Z",
+  "v": 1
 }
 ```
 
-With OpenTelemetry installed and a span active, each entry also carries that span's `trace`. See
-the [entry format](/docs/reference/entry-format/) for every field.
+The outcome's `approval.entry` is the hash of entry 4, which is also entry 5's `prev`. See the
+[entry format](/docs/reference/entry-format/) for every field.
 
-## Approvals and permission prompts
-
-The SDK calls `can_use_tool` when a tool needs permission. The adapter wraps your callback and acts
-on its answer:
-
-- **Allowed, with an `approver`:** an `approval` entry by that principal is written, for the same
-  action as the intent. The tool's outcome names it in `approval`. If the approval cannot be
-  written, the tool is denied (unless `fail_open`).
-- **Allowed, no `approver`:** nothing extra. Your code decided, not a person.
-- **Denied:** the intent's outcome is `refused`. A denial outside `can_use_tool` (a permission rule,
-  auto mode) reaches the `PermissionDenied` hook and is also `refused`.
-
-Tools that never ask (allowed by your settings) get an intent and an outcome, with no approval.
-`can_use_tool` itself needs a streamed prompt (an async iterable), as the SDK requires.
-
-## Limits
-
-- **Fail closed by default.** A tool whose intent is not durable within `timeout` is denied, and
-  the agent sees why. Set `fail_open` only if running unrecorded is acceptable.
-- **A crash leaves an open intent.** If the process dies after `PreToolUse`, no outcome is written;
-  the next writer of the stream reconciles that intent as `unknown`.
-- **An outcome that cannot be written is logged, not retried.** The tool already ran, so the open
-  intent is reconciled as `unknown` later.
-- **Only targets of file and web tools by default.** For commands, MCP tools and your own tools,
-  write a `describe` to record a target, a rule or a subject.
-
-The stream's signing keys live in `$TENBRI_KEYS`, else `~/.config/tenbri/keys`, unless you pass
-`keys` to `open`. See [keys](/docs/concepts/keys/).
+<Aside type="note" title="Limits">
+Only file and web tools get a target by default; write a `describe` for commands, MCP tools and
+your own tools. Tools you leave out with `tools` run unrecorded.
+</Aside>

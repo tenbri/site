@@ -57,7 +57,7 @@ or the **caller** (the draft you send).
 | `seq` | integer | always | writer | Starts at 1, increases by exactly 1; at most 2^53 - 1 |
 | `ts` | string (timestamp) | always | writer, or caller | Time claimed by the writer, not proven |
 | `hlc` | object `{wall, count}` | no | caller | Hybrid logical clock: `wall` milliseconds since the Unix epoch, `count` a counter, both non-negative integers. Never decreases within a stream. |
-| `trace` | object `{trace_id, span_id}` | no | caller (`tenbrid`: from `traceparent`) | OpenTelemetry span active when the entry was written: 32 and 16 lowercase hex digits |
+| `trace` | object `{trace_id, span_id}` | no | caller (`tenbrid`: from `traceparent`; the Rust writer with its `otel` feature: from the active span) | OpenTelemetry span active when the entry was written: 32 and 16 lowercase hex digits |
 | `durability` | string | no | caller (`tenbrid` fills intents) | Promise that applied when the intent was acknowledged |
 | `group` | string | no, only on `seq` 1 | caller | Stream group the lane belongs to (group keys reserved) |
 | `kind` | string | always | caller (`tenbrid` fills it per endpoint) | See [kinds](#rules-per-kind) |
@@ -69,11 +69,11 @@ or the **caller** (the draft you send).
 | `principal` | object `{kind, id}` | per kind | caller (`tenbrid`: the token's) | Whoever acted |
 | `action` | object `{type, target}` | per kind | caller | `type` the action type; `target` optional, a reference, possibly personal data |
 | `subject` | string | no | caller | Pseudonymous handle selecting the per-subject keys used for erasure ([Privacy](/docs/concepts/privacy/)) |
-| `inputs` | array of `{ref, version, digest}` | no | caller | `ref` and `version` plaintext, `digest` an input digest (keyed) |
+| `inputs` | array of `{ref, version, digest}` | no | caller (the Python and TypeScript bindings: from a run's reads) | `ref` and `version` plaintext, `digest` an input digest (keyed) |
 | `rule` | object `{ref, version, result}` | no | caller | The rule that allowed or refused. Must be absent when `source` is `proxy` or `ingest`. |
 | `approval` | object `{by, entry}` | no | caller | `by` the approver (a principal object), `entry` the entry hash of an earlier `approval` entry in this stream |
 | `links` | array of `{stream, seq, hash, rel}` | no | caller | Entries in other streams; `rel` optional. Checked for shape only (following a link is reserved). |
-| `body` | string (body address) | no | caller | Address of the encrypted body ([Privacy](/docs/concepts/privacy/)) |
+| `body` | string (body address) | no | caller | Address of the encrypted body, as `DataKeys::seal_body` in `tenbri-crypt` returns it ([Privacy](/docs/concepts/privacy/)) |
 | `attestations` | array of `{key, sig}` | no | caller | Extra signatures by the principal or an approver |
 | `ext` | object | no | caller | Experimental features. Hashed and signed like everything else; meaning may change while a feature is Experimental. |
 | `key` | object | per kind | writer | The key event of a `key` entry; see [key events](#key-events) |

@@ -1,0 +1,826 @@
+---
+title: LangGraph and LangChain
+description: "Record every tool call of a LangGraph or LangChain agent as a signed decision with TenbriCallbackHandler, human-in-the-loop approvals included."
+sidebar:
+  order: 3
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+`TenbriCallbackHandler` is a LangChain callback handler. Pass it in the `callbacks` of any
+[LangGraph](https://langchain-ai.github.io/langgraph/) graph or LangChain agent (`create_agent`,
+`createAgent`) and every tool call becomes a decision in a Tenbri stream: an intent that is durable
+before the tool runs, then its outcome. When a person answers a `HumanInTheLoopMiddleware`
+interrupt, `resume` records the answer as an approval or a refusal.
+
+## Quick start
+
+### 1. Install
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+Python 3.10 or later.
+
+<Tabs syncKey="py-pkg">
+<TabItem label="pip">
+
+```sh
+pip install --pre tenbri-langgraph langchain
+```
+
+</TabItem>
+<TabItem label="uv">
+
+```sh
+uv add --prerelease=allow tenbri-langgraph langchain
+```
+
+</TabItem>
+<TabItem label="poetry">
+
+```sh
+poetry add --allow-prereleases tenbri-langgraph langchain
+```
+
+</TabItem>
+</Tabs>
+
+This brings the `tenbri` binding, `langchain-core` 1.5 or later and `langgraph` 1.2 or later. Add
+your model's integration too, for example `langchain-anthropic`.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+Node 20 or later.
+
+<Tabs syncKey="js-pkg">
+<TabItem label="npm">
+
+```sh
+npm install @tenbri/langgraph@next tenbri@next langchain @langchain/core @langchain/langgraph zod
+```
+
+</TabItem>
+<TabItem label="pnpm">
+
+```sh
+pnpm add @tenbri/langgraph@next tenbri@next langchain @langchain/core @langchain/langgraph zod
+```
+
+</TabItem>
+<TabItem label="yarn">
+
+```sh
+yarn add @tenbri/langgraph@next tenbri@next langchain @langchain/core @langchain/langgraph zod
+```
+
+</TabItem>
+<TabItem label="bun">
+
+```sh
+bun add @tenbri/langgraph@next tenbri@next langchain @langchain/core @langchain/langgraph zod
+```
+
+</TabItem>
+</Tabs>
+
+The adapter needs `@langchain/core` and `@langchain/langgraph` 1.1 or later. Add your model's
+integration too, for example `@langchain/anthropic`. The snippets on this page are ES modules with
+top-level `await`: set `"type": "module"` in `package.json` (`npm pkg set type=module`).
+
+</TabItem>
+</Tabs>
+
+### 2. Add the handler
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="agent.py"
+from langchain.agents import create_agent
+from langchain_core.tools import tool
+from tenbri import Tenbri
+from tenbri_langgraph import TenbriCallbackHandler
+
+
+@tool
+def lookup_order(order: str) -> str:
+    """Looks up the shipping status of an order."""
+    return f"order {order} shipped"
+
+
+log = Tenbri.open("./audit", create=True)
+tenbri = TenbriCallbackHandler(log, target=lambda tool, args: f"order:{args['order']}")
+
+agent = create_agent("anthropic:claude-sonnet-5-5", tools=[lookup_order], name="support")
+result = agent.invoke(
+    {"messages": [("user", "Where is order 1042?")]}, {"callbacks": [tenbri]}
+)
+print(result["messages"][-1].content)
+print("pin this:", log.fingerprint)
+log.close()
+```
+
+The handler is synchronous: open the stream with `Tenbri`, not `AsyncTenbri`.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="agent.ts"
+import { createAgent, tool } from 'langchain'
+import { Tenbri } from 'tenbri'
+import { TenbriCallbackHandler } from '@tenbri/langgraph'
+import { z } from 'zod'
+
+const lookupOrder = tool(async ({ order }) => `order ${order} shipped`, {
+  name: 'lookup_order',
+  description: 'Looks up the shipping status of an order.',
+  schema: z.object({ order: z.string() }),
+})
+
+const log = await Tenbri.open('./audit', { create: true })
+const tenbri = new TenbriCallbackHandler(log, { target: (_tool, args) => `order:${args.order}` })
+
+const agent = createAgent({ model: 'anthropic:claude-sonnet-5-5', tools: [lookupOrder], name: 'support' })
+const result = await agent.invoke(
+  { messages: [{ role: 'user', content: 'Where is order 1042?' }] },
+  { callbacks: [tenbri] },
+)
+console.log(result.messages.at(-1)?.content)
+console.log('pin this:', log.fingerprint)
+await log.close()
+```
+
+</TabItem>
+</Tabs>
+
+The agent's `name` becomes the principal, `agent:support`. `create=True` makes the stream and its
+signing keys the first time. The keys go to `$TENBRI_KEYS`, else `~/.config/tenbri/keys`, never
+into the stream. See [keys](/docs/concepts/keys/).
+
+### 3. Run it
+
+With your model's API key set (`ANTHROPIC_API_KEY` here):
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```sh
+python agent.py
+```
+
+```text
+Order 1042 has shipped.
+pin this: sha256:0c00312a8fa29364ce687fbe7d0d966486988c3b7a818662ac1552c9217fab75
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+Node 22.18 or later runs `.ts` files as they are; on Node 20, use `npx tsx agent.ts`.
+
+```sh
+node agent.ts
+```
+
+```text
+Order 1042 has shipped.
+pin this: sha256:0d8474904821b6c247d3912d0bc26d4ee9e65774d23397ca69c76d5702330bb7
+```
+
+</TabItem>
+</Tabs>
+
+This output comes from a run with a scripted chat model in place of the real one (see
+[testing offline](#test-your-agent-offline)) that asks for `lookup_order` once, then answers. Keep
+the fingerprint: it is what you verify against.
+
+### 4. See the entries
+
+<Tabs syncKey="lang">
+<TabItem label="CLI">
+
+```sh
+tenbri tail ./audit -n 2 --no-follow
+```
+
+```text
+{"action":{"target":"order:1042","type":"lookup_order"},"durability":"local","ext":{"langchain":{"run_id":"01a159ce-54bb-7226-b5ba-e3fc08c279df","tool_call_id":"call_1"}},"id":"01M5CWWN5Y7ABD4E2826KY8VMW","kind":"decision","phase":"intent","prev":"sha256:d3ef5957…","principal":{"id":"support","kind":"agent"},"seq":3,"sig":"ed25519:cf517707…","signer":"sess:2026-10-20:22e9a3dd7e12","source":"sdk","stream":"tnb1:0c00312a8fa29364ce687fbe7d0d9664","ts":"2026-10-20T14:54:16.770Z","v":1}
+{"action":{"target":"order:1042","type":"lookup_order"},"id":"01M5CWWN6KJGRFVAT9JBR7Y25N","intent":"01M5CWWN5Y7ABD4E2826KY8VMW","kind":"decision","phase":"outcome","prev":"sha256:e955f0bc…","principal":{"id":"support","kind":"agent"},"seq":4,"sig":"ed25519:2b79bfe9…","signer":"sess:2026-10-20:22e9a3dd7e12","source":"sdk","status":"ok","stream":"tnb1:0c00312a8fa29364ce687fbe7d0d9664","ts":"2026-10-20T14:54:16.790Z","v":1}
+```
+
+```sh
+tenbri verify ./audit --key sha256:0c00312a…   # your full fingerprint
+```
+
+```text
+verified 4 entries, stream tnb1:0c00312a8fa29364ce687fbe7d0d9664, pinned to sha256:0c00312a8fa29364ce687fbe7d0d966486988c3b7a818662ac1552c9217fab75
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python title="read.py"
+import sys
+from tenbri import Tenbri
+
+# key: the fingerprint you pinned when the stream was created
+log = Tenbri.open("./audit", key=sys.argv[1])
+report = log.verify()
+print("ok:", report.ok, "entries:", report.entries)
+for m in log.query(principal="agent:support"):
+    e = m.entry
+    print(m.verification, e["seq"], e["phase"], e.get("status", ""), e["action"])
+log.close()
+```
+
+```sh
+python read.py sha256:0c00312a…   # your full fingerprint
+```
+
+```text
+ok: True entries: 4
+verified 3 intent  {'target': 'order:1042', 'type': 'lookup_order'}
+verified 4 outcome ok {'target': 'order:1042', 'type': 'lookup_order'}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="read.ts"
+import { Tenbri } from 'tenbri'
+
+// key: the fingerprint you pinned when the stream was created
+const log = await Tenbri.open('./audit', { key: process.argv[2] })
+const report = await log.verify()
+console.log('ok:', report.ok, 'entries:', report.entries)
+for (const { verification, entry: e } of await log.query({ principal: 'agent:support' })) {
+  console.log(verification, e.seq, e.phase, e.status ?? '', e.action)
+}
+await log.close()
+```
+
+```sh
+node read.ts sha256:0d847490…   # your full fingerprint
+```
+
+```text
+ok: true entries: 4
+verified 3 intent  { target: 'order:1042', type: 'lookup_order' }
+verified 4 outcome ok { target: 'order:1042', type: 'lookup_order' }
+```
+
+</TabItem>
+</Tabs>
+
+Entries 1 and 2 are the stream's key entries. Entry 3 is the intent, written before
+`lookup_order` ran; entry 4 is its outcome. The LangChain run id and tool call id go into
+`ext.langchain`, so a LangSmith run and a decision find each other.
+
+## Configuration
+
+`TenbriCallbackHandler(log, ...)` in Python (keyword arguments),
+`new TenbriCallbackHandler(log, { ... })` in TypeScript.
+
+| Python | TypeScript | Default | What it does |
+| --- | --- | --- | --- |
+| `principal` | `principal` | the agent's name, else `agent:langgraph` | Who acts. The default reads the name given to `create_agent` (`createAgent`). |
+| `tools` | `tools` | every tool | Names to record, or a predicate of the tool name. |
+| `target` | `target` | none | `(tool, args)` to `action.target`. |
+| `inputs` | `inputs` | none | `(tool, args)` to the inputs the call relied on. Python: `{ref, version, digest}` mappings or `(ref, version, content)` tuples. TypeScript: `{ref, version, digest}` or `{ref, version, content}`. Content is digested with the stream's digest key. |
+| `fail_open` | `failOpen` | `False` / `false` | Run the tool, unrecorded, when its intent could not be written. A warning is logged. |
+
+When the stream is opened with a digest key (`digest_key` / `digestKey`), each intent also pins the
+call's arguments by keyed digest, as the input `langchain:tool_call/<tool call id>@args`. Arguments
+and results are never stored.
+
+Pinning the policy a refund relied on, as the repository's example does:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+log = Tenbri.open("./audit", create=True, digest_key=digest_key)
+tenbri = TenbriCallbackHandler(
+    log,
+    target=lambda tool, args: f"stripe:{args['charge']}",
+    inputs=lambda tool, args: [("policy:refund", "14", b"refunds over 50 EUR need a person")],
+)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+const log = await Tenbri.open('./audit', { create: true, digestKey })
+const tenbri = new TenbriCallbackHandler(log, {
+  target: (_tool, args) => `stripe:${args.charge}`,
+  inputs: () => [{ ref: 'policy:refund', version: '14', content: 'refunds over 50 EUR need a person' }],
+})
+```
+
+</TabItem>
+</Tabs>
+
+For trace ids on entries, install OpenTelemetry (`pip install --pre "tenbri-langgraph[otel]"`; the
+npm package already depends on `@opentelemetry/api`). Each entry then carries the active span's
+`trace`.
+
+## Approvals and refusals
+
+There are three ways a call can be stopped or approved, and each is recorded:
+
+| What happens | Entries |
+| --- | --- |
+| A person approves (or edits) a `HumanInTheLoopMiddleware` interrupt, recorded with `resume` | An `approval` by that person; the tool's intent names it in `approval: {by, entry}` |
+| A person rejects the interrupt, recorded with `resume` | An intent and a `refused` outcome, with the reviewer in `ext.langchain` |
+| Your tool raises `tenbri.Refused` (`throw new Refused(...)`) | The intent, then the outcome `refused` |
+
+`HumanInTheLoopMiddleware` needs a checkpointer. Pass the person's answer through
+`tenbri.resume(...)`, which records it and returns the `Command` to invoke the graph with:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="refunds.py"
+from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
+from tenbri import Tenbri
+from tenbri_langgraph import TenbriCallbackHandler
+
+
+@tool
+def issue_refund(charge: str, amount: int) -> str:
+    """Refund `amount` EUR of a charge."""
+    return f"refunded {amount} EUR of {charge}"
+
+
+log = Tenbri.open("./audit", create=True)
+tenbri = TenbriCallbackHandler(log, target=lambda tool, args: f"stripe:{args['charge']}")
+agent = create_agent(
+    "anthropic:claude-sonnet-5-5",
+    tools=[issue_refund],
+    name="support",
+    middleware=[
+        HumanInTheLoopMiddleware(interrupt_on={
+            "issue_refund": {
+                "allowed_decisions": ["approve", "reject"],
+                "when": lambda r: r.tool_call["args"]["amount"] > 50,  # over 50 EUR: ask a person
+            }
+        })
+    ],
+    checkpointer=InMemorySaver(),  # interrupts need a checkpointer
+)
+config = {"callbacks": [tenbri], "configurable": {"thread_id": "ticket-42"}}
+
+agent.invoke({"messages": [("user", "Refund 120 EUR of ch_2")]}, config)  # paused for review
+answer = {"decisions": [{"type": "approve"}]}
+agent.invoke(tenbri.resume(agent, config, answer, by="person:alice"), config)
+
+agent.invoke({"messages": [("user", "Refund 900 EUR of ch_3")]}, config)  # paused for review
+answer = {"decisions": [{"type": "reject", "message": "over the limit"}]}
+agent.invoke(tenbri.resume(agent, config, answer, by="person:alice"), config)
+
+for m in log.query(action="issue_refund"):
+    e = m.entry
+    who = f"{e['principal']['kind']}:{e['principal']['id']}"
+    print(e["seq"], e["kind"], e.get("phase", ""), e.get("status", ""), who, e["action"]["target"])
+log.close()
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="refunds.ts"
+import { MemorySaver } from '@langchain/langgraph'
+import { createAgent, humanInTheLoopMiddleware, tool } from 'langchain'
+import { Tenbri } from 'tenbri'
+import { TenbriCallbackHandler } from '@tenbri/langgraph'
+import { z } from 'zod'
+
+const issueRefund = tool(async ({ charge, amount }) => `refunded ${amount} EUR of ${charge}`, {
+  name: 'issue_refund',
+  description: 'Refund `amount` EUR of a charge.',
+  schema: z.object({ charge: z.string(), amount: z.number() }),
+})
+
+const log = await Tenbri.open('./audit', { create: true })
+const tenbri = new TenbriCallbackHandler(log, { target: (_tool, args) => `stripe:${args.charge}` })
+const agent = createAgent({
+  model: 'anthropic:claude-sonnet-5-5',
+  tools: [issueRefund],
+  name: 'support',
+  middleware: [
+    humanInTheLoopMiddleware({
+      interruptOn: {
+        // over 50 EUR: ask a person
+        issue_refund: { allowedDecisions: ['approve', 'reject'], when: (r: any) => r.toolCall.args.amount > 50 },
+      },
+    }),
+  ],
+  checkpointer: new MemorySaver(), // interrupts need a checkpointer
+})
+const config = { callbacks: [tenbri], configurable: { thread_id: 'ticket-42' } }
+
+await agent.invoke({ messages: [{ role: 'user', content: 'Refund 120 EUR of ch_2' }] }, config) // paused for review
+let answer: any = { decisions: [{ type: 'approve' }] }
+await agent.invoke(await tenbri.resume(agent, config, answer, { by: 'person:alice' }), config)
+
+await agent.invoke({ messages: [{ role: 'user', content: 'Refund 900 EUR of ch_3' }] }, config) // paused for review
+answer = { decisions: [{ type: 'reject', message: 'over the limit' }] }
+await agent.invoke(await tenbri.resume(agent, config, answer, { by: 'person:alice' }), config)
+
+for (const { entry: e } of await log.query({ action: 'issue_refund' })) {
+  console.log(e.seq, e.kind, e.phase ?? '', e.status ?? '', `${e.principal?.kind}:${e.principal?.id}`, e.action?.target)
+}
+await log.close()
+```
+
+</TabItem>
+</Tabs>
+
+With a scripted model asking for each refund in turn, both print:
+
+```text
+3 approval   person:alice stripe:ch_2
+4 decision intent  agent:support stripe:ch_2
+5 decision outcome ok agent:support stripe:ch_2
+6 decision intent  agent:support stripe:ch_3
+7 decision outcome refused agent:support stripe:ch_3
+```
+
+The approval (`seq` 3) is written before the intent that names it (`seq` 4). The rejected refund
+never ran: its intent and `refused` outcome are written by `resume`.
+
+- `resume` takes what you would pass to `Command(resume=...)`: `{"decisions": [...]}`, a single
+  decision, or a mapping of interrupt ids to those when several interrupts are pending. It handles
+  both per-call and batched interrupts. A `respond` decision (the person answers instead of the
+  tool) is written as a `note`.
+- In batched mode, LangChain.js runs none of a batch's calls when one is rejected; their approvals
+  stay in the stream, unused.
+- For an `interrupt()` of your own, call `tenbri.approve(tool, args, by=..., tool_call_id=...)`
+  (TypeScript: `await tenbri.approve(tool, args, { by, toolCallId })`) once the person has answered.
+  The call's intent then names that approval.
+
+## Choose where entries go
+
+The stream is wherever `open` points. The handler does not change; only the URL does.
+
+| Location | URL | Credentials |
+| --- | --- | --- |
+| A local directory | `./audit` or `file:///var/lib/audit/support` | none |
+| AWS S3, MinIO | `s3://bucket/prefix` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`; `AWS_ENDPOINT_URL` (and `AWS_ALLOW_HTTP=true` for plain HTTP) for MinIO |
+| Cloudflare R2 | `r2://bucket/prefix` | `CLOUDFLARE_ACCOUNT_ID`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+log = Tenbri.open("s3://acme-audit/tenbri/support", create=True)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+const log = await Tenbri.open('s3://acme-audit/tenbri/support', { create: true })
+```
+
+</TabItem>
+</Tabs>
+
+Signing keys stay on the machine that writes; only entries go to the bucket, with
+`"durability":"replicated"`. See [Storage](/docs/reference/storage/) for every variable.
+
+The bindings do not write through a `tenbrid` server. To send entries to `tenbrid` over REST, record
+by hand as shown in [Use Tenbri from any framework](/docs/adapters/planned/#use-tenbri-from-any-framework-today).
+
+## Read back and verify
+
+Anyone with read access to the stream and its fingerprint can check it; no keys needed. Pin the
+fingerprint you got at creation: verifying without one only shows that the stream agrees with its
+own first key.
+
+<Tabs syncKey="lang">
+<TabItem label="CLI">
+
+```sh
+tenbri verify ./audit --key sha256:0c00312a…                    # the whole stream
+tenbri query ./audit --action issue_refund --key sha256:0c00312a…
+tenbri query ./audit --input policy:refund@14 --key sha256:0c00312a…
+tenbri tail ./audit --key sha256:0c00312a…                      # follow new entries
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+log = Tenbri.open("./audit", key="sha256:0c00312a…")
+report = log.verify()                           # report.ok, report.entries, report.broken
+refunds = log.query(action="issue_refund", target="stripe:ch_2")
+under_policy = log.query(inputs=["policy:refund@14"])
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+const log = await Tenbri.open('./audit', { key: 'sha256:0c00312a…' })
+const report = await log.verify() // report.ok, report.entries, report.broken
+const refunds = await log.query({ action: 'issue_refund', target: 'stripe:ch_2' })
+const underPolicy = await log.query({ inputs: ['policy:refund@14'] })
+```
+
+</TabItem>
+</Tabs>
+
+Each match carries `verification`: `verified` when a key is pinned, `unpinned` when not. See the
+[CLI reference](/docs/reference/cli/).
+
+## Test your agent offline
+
+Give the agent a chat model that plays back prepared messages, tool calls included. The graph runs
+as usual, with no API key and no network, and you assert on what the stream holds. The adapter's
+own tests work this way.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="test_agent.py"
+import pytest
+from langchain.agents import create_agent
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage
+from langchain_core.tools import tool
+from tenbri import Refused, Tenbri
+from tenbri_langgraph import TenbriCallbackHandler
+
+
+class FakeModel(GenericFakeChatModel):
+    """Plays back AI messages, tool calls included: no API key, no network."""
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+def calls(*tool_calls):
+    return AIMessage("", tool_calls=[{"name": n, "args": a, "id": i} for n, i, a in tool_calls])
+
+
+@tool
+def issue_refund(charge: str, amount: int) -> str:
+    """Refund `amount` EUR of a charge."""
+    if amount > 500:
+        raise Refused("over the refund ceiling")
+    return "refunded"
+
+
+def test_refunds_are_recorded(tmp_path):
+    log = Tenbri.open(tmp_path / "audit", keys=tmp_path / "keys", create=True)
+    tenbri = TenbriCallbackHandler(log, target=lambda tool, args: f"stripe:{args['charge']}")
+    model = FakeModel(messages=iter([
+        calls(("issue_refund", "c1", {"charge": "ch_1", "amount": 20})),
+        AIMessage("Refunded."),
+        calls(("issue_refund", "c2", {"charge": "ch_2", "amount": 900})),
+    ]))
+    agent = create_agent(model, tools=[issue_refund], name="support")
+    config = {"callbacks": [tenbri]}
+
+    agent.invoke({"messages": [("user", "Refund ch_1")]}, config)
+    with pytest.raises(Refused):  # ToolNode re-raises what the tool raised
+        agent.invoke({"messages": [("user", "Refund ch_2")]}, config)
+
+    entries = [m.entry for m in log.query(action="issue_refund")]
+    assert [(e["phase"], e.get("status"), e["action"]["target"]) for e in entries] == [
+        ("intent", None, "stripe:ch_1"),
+        ("outcome", "ok", "stripe:ch_1"),
+        ("intent", None, "stripe:ch_2"),
+        ("outcome", "refused", "stripe:ch_2"),
+    ]
+    assert log.verify(log.fingerprint).ok
+    log.close()
+```
+
+```sh
+python -m pytest -q test_agent.py
+```
+
+```text
+.                                                                        [100%]
+1 passed in 0.34s
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="agent.test.ts"
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { BaseChatModel } from '@langchain/core/language_models/chat_models'
+import { AIMessage } from '@langchain/core/messages'
+import type { ChatResult } from '@langchain/core/outputs'
+import { createAgent, tool } from 'langchain'
+import { Refused, Tenbri } from 'tenbri'
+import { TenbriCallbackHandler } from '@tenbri/langgraph'
+import { z } from 'zod'
+
+/** Plays back AI messages, tool calls included: no API key, no network. */
+class Scripted extends BaseChatModel {
+  turns: AIMessage[]
+  constructor(turns: AIMessage[]) {
+    super({})
+    this.turns = turns
+  }
+  _llmType() {
+    return 'scripted'
+  }
+  bindTools() {
+    return this as any
+  }
+  async _generate(): Promise<ChatResult> {
+    const message = this.turns.shift() ?? new AIMessage('done')
+    return { generations: [{ message, text: '' }] }
+  }
+}
+const refund = (id: string, charge: string, amount: number) =>
+  new AIMessage({ content: '', tool_calls: [{ id, name: 'issue_refund', args: { charge, amount }, type: 'tool_call' }] })
+
+const issueRefund = tool(
+  async ({ charge, amount }) => {
+    if (amount > 500) throw new Refused('over the refund ceiling')
+    return `refunded ${amount} EUR of ${charge}`
+  },
+  { name: 'issue_refund', description: 'Refund `amount` EUR of a charge.', schema: z.object({ charge: z.string(), amount: z.number() }) },
+)
+
+test('refunds are recorded', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'audit-'))
+  const log = await Tenbri.open(join(dir, 'audit'), { keys: join(dir, 'keys'), create: true })
+  const tenbri = new TenbriCallbackHandler(log, { target: (_tool, args) => `stripe:${args.charge}` })
+  const model = new Scripted([refund('c1', 'ch_1', 20), new AIMessage('Refunded.'), refund('c2', 'ch_2', 900)])
+  const agent = createAgent({ model, tools: [issueRefund], name: 'support' })
+  const config = { callbacks: [tenbri] }
+
+  await agent.invoke({ messages: [{ role: 'user', content: 'Refund ch_1' }] }, config)
+  await agent.invoke({ messages: [{ role: 'user', content: 'Refund ch_2' }] }, config) // the refusal goes back to the model
+
+  const entries = (await log.query({ action: 'issue_refund' })).map((m) => m.entry)
+  assert.deepEqual(
+    entries.map((e) => [e.phase, e.status, e.action?.target]),
+    [
+      ['intent', undefined, 'stripe:ch_1'],
+      ['outcome', 'ok', 'stripe:ch_1'],
+      ['intent', undefined, 'stripe:ch_2'],
+      ['outcome', 'refused', 'stripe:ch_2'],
+    ],
+  )
+  assert.ok((await log.verify(log.fingerprint!)).ok)
+  await log.close()
+})
+```
+
+```sh
+node --test agent.test.ts
+```
+
+```text
+✔ refunds are recorded (182.289208ms)
+ℹ pass 1
+ℹ fail 0
+```
+
+</TabItem>
+</Tabs>
+
+The two tests show a difference between the frameworks: Python's `ToolNode` re-raises a tool's
+exception (unless you set `handle_tool_errors`), so `invoke` raises `Refused`. LangChain.js hands
+the error to the model as a tool message, and `invoke` returns. Both record `refused`.
+
+## Troubleshooting
+
+| Message | Cause | What to do |
+| --- | --- | --- |
+| Python: `StoreUnavailableError: closed` raised by `invoke`, after LangChain logs `Error in TenbriCallbackHandler.on_tool_start callback: StoreUnavailableError('closed')` | The intent could not be written (here the stream was closed), so the tool did not run. | Keep the stream open for the whole run. Any write failure surfaces this way. |
+| TypeScript: LangChain logs `Error in handler TenbriCallbackHandler, handleToolStart: StoreUnavailableError: closed`, and the model gets the tool message `StoreUnavailableError: closed` | The same; `createAgent` hands the error to the model instead of throwing. The tool did not run. | The same. |
+| `tenbri: lookup_order ran unrecorded (fail-open): closed` (a warning) | `fail_open` is on and the intent could not be written; the tool ran. | Fix the stream; the call is not in the record. |
+| `several interrupts are pending: key the answers by interrupt id` | `resume` got one answer while several interrupts wait. | Pass a mapping of interrupt ids to answers. |
+| Entries say `agent:langgraph` | The agent has no name and no `principal` was given. | Pass `name=` to `create_agent` (`name` to `createAgent`), or `principal`. |
+| The intent has no `inputs` | The stream was opened without a digest key. | Open it with `digest_key` (`digestKey`) to pin each call's arguments by keyed digest. |
+| `tenbri.errors.NotFoundError: no stream at ./audit: ./audit is not a directory` | `open` without `create` on a path with no stream. | Pass `create=True` (`create: true`) the first time, or fix the path. |
+
+An outcome that cannot be written is logged (`tenbri: outcome of … not recorded: …`), not raised:
+the tool already ran. A process that dies mid-call leaves its intent open; the next writer of the
+stream records it as `unknown`. A LangGraph `interrupt()` inside a tool ends that call as
+`unknown`: the tool runs again from the start on resume, as a new decision.
+
+## What is written
+
+| What happens | Entry |
+| --- | --- |
+| A tool starts | An `intent`: `principal` the agent, `action.type` the tool name, `action.target` from `target`, `ext.langchain` with the run id, tool call id and thread id. Durable before the tool runs. |
+| The tool returns | The outcome `ok` (`error` if it returned an error `ToolMessage`, from `handle_tool_error`) |
+| The tool raises | The outcome `error`, `refused` for `tenbri.Refused`, `unknown` for a LangGraph interrupt |
+| `resume` with `approve` or `edit` | An `approval` by the reviewer; the call's intent names it |
+| `resume` with `reject` | An intent and a `refused` outcome; `ext.langchain` holds `decision` and `reviewer` |
+| `resume` with `respond` | A `note` by the reviewer |
+
+The entries of the approvals run above, as stored (signatures and hashes shortened). Alice's
+approval and the intent that names it:
+
+```json
+{
+  "action": { "target": "stripe:ch_2", "type": "issue_refund" },
+  "ext": {
+    "langchain": {
+      "checkpoint_id": "1f1cc963-0851-60f2-8001-940112d7cdb8",
+      "thread_id": "ticket-42",
+      "tool_call_id": "c2"
+    }
+  },
+  "id": "01M5CWXHCBCKVXXJN9AMTA0H09",
+  "kind": "approval",
+  "prev": "sha256:be41a400…",
+  "principal": { "id": "alice", "kind": "person" },
+  "seq": 3,
+  "sig": "ed25519:eafeaa4c…",
+  "signer": "sess:2026-10-20:fa2e7c9c2047",
+  "stream": "tnb1:f3a99a5f3b9992f63e7f0bf391b42b51",
+  "ts": "2026-10-20T14:54:45.647Z",
+  "v": 1
+}
+```
+
+```json
+{
+  "action": { "target": "stripe:ch_2", "type": "issue_refund" },
+  "approval": {
+    "by": { "id": "alice", "kind": "person" },
+    "entry": "sha256:4403cc8d…"
+  },
+  "durability": "local",
+  "ext": {
+    "langchain": {
+      "run_id": "01a159ce-c5a3-70d2-944c-8e09a141881b",
+      "thread_id": "ticket-42",
+      "tool_call_id": "c2"
+    }
+  },
+  "id": "01M5CWXHD39098H3YNTB8H7392",
+  "kind": "decision",
+  "phase": "intent",
+  "prev": "sha256:4403cc8d…",
+  "principal": { "id": "support", "kind": "agent" },
+  "seq": 4,
+  "sig": "ed25519:1dab44e7…",
+  "signer": "sess:2026-10-20:fa2e7c9c2047",
+  "source": "sdk",
+  "stream": "tnb1:f3a99a5f3b9992f63e7f0bf391b42b51",
+  "ts": "2026-10-20T14:54:45.670Z",
+  "v": 1
+}
+```
+
+The rejected refund's intent, written by `resume`, with the reviewer:
+
+```json
+{
+  "action": { "target": "stripe:ch_3", "type": "issue_refund" },
+  "durability": "local",
+  "ext": {
+    "langchain": {
+      "checkpoint_id": "1f1cc963-0901-6786-8008-d8465750e2ae",
+      "decision": "reject",
+      "reviewer": "person:alice",
+      "thread_id": "ticket-42",
+      "tool_call_id": "c3"
+    }
+  },
+  "id": "01M5CWXHEFMNJSKY1M4X03SMM7",
+  "kind": "decision",
+  "phase": "intent",
+  "prev": "sha256:b849f5e2…",
+  "principal": { "id": "support", "kind": "agent" },
+  "seq": 6,
+  "sig": "ed25519:3f501b10…",
+  "signer": "sess:2026-10-20:fa2e7c9c2047",
+  "source": "sdk",
+  "stream": "tnb1:f3a99a5f3b9992f63e7f0bf391b42b51",
+  "ts": "2026-10-20T14:54:45.714Z",
+  "v": 1
+}
+```
+
+Its outcome (`seq` 7) has `"status": "refused"` and the same principal, `agent:support`. See the
+[entry format](/docs/reference/entry-format/) for every field.
+
+<Aside type="note" title="Fail closed">
+The handler raises its errors (`raise_error` in Python, `raiseError` in TypeScript), and LangChain
+awaits it before the tool runs. If the intent cannot be written, the tool does not run. Use
+`fail_open` / `failOpen` only if running unrecorded is acceptable.
+</Aside>

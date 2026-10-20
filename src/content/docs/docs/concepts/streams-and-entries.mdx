@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## Streams
 
@@ -30,6 +30,8 @@ A stream is stored as plain files, on a local disk or under an object-store pref
   HEAD                         the latest seq and entry hash, signed
   batches/000000000001.jsonl   entries, one per line, named by the first seq
   checkpoints/000000002000.note
+  anchors/000000002000.tsr     RFC 3161 timestamp of that checkpoint, if any
+  blobs/ct-sha256/ab/cd…       encrypted bodies, if any
 ```
 
 A **batch** holds consecutive entries and is written once, never rewritten. **HEAD** names the
@@ -199,10 +201,57 @@ entries, but no Tenbri component writes them today.
 
 ## Inputs and rule
 
-`inputs` pins what the decision read. `ref` and `version` are plaintext, so you can query by them
-(`tenbri query --input policy:refund@14`). `digest` is a keyed hash of the content,
-`hmac-sha256:` and 64 hex digits, so a guessed value cannot be confirmed from the log. How the
-digest key is derived is in [Privacy](/docs/concepts/privacy/).
+`inputs` pins what the decision read. `ref` and `version` are plaintext, so you can query by them.
+`digest` is a keyed hash of the content, `hmac-sha256:` and 64 hex digits, so a guessed value
+cannot be confirmed from the log. How the digest key is derived is in
+[Privacy](/docs/concepts/privacy/).
+
+Every decision that read version 14 of the refund policy:
+
+<Tabs syncKey="lang">
+<TabItem label="CLI">
+
+```sh
+tenbri query audit/support --input policy:refund@14 --key sha256:5db31441…
+```
+
+`--input policy:refund` matches any version. `query` also filters by `--action`, `--principal`,
+`--target`, `--subject`, `--rule`, `--status`, `--trace` and a time range
+([CLI](/docs/reference/cli/#query)).
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from tenbri import Tenbri
+
+log = Tenbri.open("audit/support", key="sha256:5db31441…")
+for m in log.query(inputs=["policy:refund@14"]):
+    print(m.verification, m.entry["seq"], m.entry["action"])
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+import { Tenbri } from 'tenbri'
+
+const log = await Tenbri.open('audit/support', { key: 'sha256:5db31441…' })
+for (const m of await log.query({ inputs: ['policy:refund@14'] })) {
+  console.log(m.verification, m.entry.seq, m.entry.action)
+}
+```
+
+</TabItem>
+<TabItem label="REST">
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:7070/v1/streams/support/entries?input=policy:refund@14"
+```
+
+</TabItem>
+</Tabs>
 
 `rule` names the rule or grant that allowed or refused the action, with its version and a free
 `result` string (`allow` in the examples). It must be absent when `source` is `proxy` or `ingest`.
@@ -246,9 +295,18 @@ Following a link needs the linked stream's trust root, and that is reserved for 
 `trace` holds the OpenTelemetry `trace_id` and `span_id` active when the entry was written, so a
 decision links to the trace that produced it. You can set it in any entry you append.
 
-<Aside type="caution" title="Planned">
-Automatic OpenTelemetry correlation (filling `trace` from the active span) is not in a release yet.
-</Aside>
+It can also be filled in for you:
+
+- `tenbrid` takes it from the W3C `traceparent` header of an append, unless the draft has one.
+- The Rust writer (`tenbri-writer` with the `otel` feature) puts the active OpenTelemetry span's
+  ids on every entry appended without `trace`. It sends no telemetry itself: the OpenTelemetry API
+  does nothing until your application installs an SDK and an exporter.
+- The Claude Agent SDK and LangGraph adapters take it from the active OpenTelemetry span when
+  OpenTelemetry is installed; the OpenAI Agents SDK adapter takes it from that SDK's own tracing
+  ([Adapters](/docs/adapters/)).
+
+`tenbri query --trace <trace id>` and the `trace_id` query parameter of `tenbrid` find the entries
+of one trace.
 
 ## Durability
 

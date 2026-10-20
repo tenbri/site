@@ -1,17 +1,48 @@
 ---
 title: tenbrid over REST
-description: Run tenbrid locally, then write, list, tail and verify entries with curl.
+description: "Run tenbrid locally, then write, list, tail and verify entries with curl, Python, TypeScript or gRPC."
 sidebar:
   order: 5
 ---
 
-`tenbrid` serves streams over REST and gRPC, so agents in any language can write to them. You will
-start it on your machine with one stream and one bearer token, record an intent and its outcome
-with `curl`, retry a write safely with the same `Idempotency-Key`, list and tail entries, and ask
-the server to verify the stream.
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-**Prerequisites:** the `tenbri` and `tenbrid` binaries ([install](/docs/getting-started/install/))
-and `curl`.
+`tenbrid` serves streams over REST and gRPC, so agents in any language can write to them. You will
+start it on your machine with one stream and one bearer token, record an intent and its outcome,
+retry a write safely with the same `Idempotency-Key`, list and tail entries, and ask the server to
+verify the stream. Every call is shown with `curl` (the REST tab), Python
+([httpx](https://www.python-httpx.org/)) and TypeScript (the built-in `fetch`). A gRPC client
+closes the page.
+
+**Prerequisites:** the `tenbri` and `tenbrid` binaries ([install](/docs/getting-started/install/)),
+and one of:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```sh
+pip install httpx python-ulid
+```
+
+`requests` works the same way for every call but the tail, which needs a streaming response.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+Node 20 or later, and a ULID generator:
+
+```sh
+npm install ulid
+npm pkg set type=module
+```
+
+</TabItem>
+<TabItem label="REST">
+
+`curl`.
+
+</TabItem>
+</Tabs>
 
 ## 1. Create the stream and a token
 
@@ -22,14 +53,14 @@ tenbrid token
 ```
 
 ```text
-created stream tnb1:bb63fd4f0deb4a5220d91220c3088e00 at audit/support
-stream key fingerprint (pin it): sha256:bb63fd4f0deb4a5220d91220c3088e003d3810d16e4d8adf2c0eff92be8ee4e5
-keys: ./keys/tnb1-bb63fd4f0deb4a5220d91220c3088e00
-verify with: tenbri verify audit/support --key sha256:bb63fd4f0deb4a5220d91220c3088e003d3810d16e4d8adf2c0eff92be8ee4e5
-token (give it to the client; it is not stored): tnbt_0b7ad927…
+created stream tnb1:5fb73e66e6240e0f873162fafd1480c4 at audit/support
+stream key fingerprint (pin it): sha256:5fb73e66e6240e0f873162fafd1480c4428cf030483490dabcf4f502197e9deb
+keys: ./keys/tnb1-5fb73e66e6240e0f873162fafd1480c4
+verify with: tenbri verify audit/support --key sha256:5fb73e66e6240e0f873162fafd1480c4428cf030483490dabcf4f502197e9deb
+token (give it to the client; it is not stored): tnbt_c5b3bd4c…
 
 [[tokens]]
-sha256 = "sha256:458793b41a8061f347816d886e6d55022e39cc11c8c0045b4bfbfa9ac17c2e12"
+sha256 = "sha256:d7a060573fd59ee31df6395b9d4222475bf18dc67b054533d362c3d1921e39d5"
 principal = { kind = "agent", id = "..." }
 ```
 
@@ -44,7 +75,7 @@ Each token is bound to one principal; entries written with it carry that princip
 path = "audit/support"
 
 [[tokens]]
-sha256 = "sha256:458793b41a8061f347816d886e6d55022e39cc11c8c0045b4bfbfa9ac17c2e12"
+sha256 = "sha256:d7a060573fd59ee31df6395b9d4222475bf18dc67b054533d362c3d1921e39d5"
 principal = { kind = "agent", id = "support-assistant" }
 ```
 
@@ -57,13 +88,68 @@ TENBRI_LISTEN=127.0.0.1:8080 TENBRI_GRPC_LISTEN=127.0.0.1:8081 tenbrid --config 
 ```
 
 ```text
-tenbrid 0.1.0-alpha.2: REST on http://127.0.0.1:8080, gRPC on 127.0.0.1:8081, 1 streams
+tenbrid 0.1.0-beta.1: REST on http://127.0.0.1:8080, gRPC on 127.0.0.1:8081, 1 streams
 ```
 
-In another terminal:
+In another terminal, export the token from step 1 and make a client. The Python and TypeScript
+snippets on this page form one script: each step continues the previous one.
 
 ```sh
-export TOKEN=tnbt_0b7ad927…   # the token printed in step 1
+export TOKEN=tnbt_c5b3bd4c…   # the token printed in step 1
+```
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="client.py"
+import json
+import os
+
+import httpx
+from ulid import ULID
+
+client = httpx.Client(
+    base_url="http://127.0.0.1:8080",
+    headers={"Authorization": f"Bearer {os.environ['TOKEN']}"},
+)
+print(client.get("/v1/health").json())
+```
+
+```text
+{'status': 'ok'}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="client.ts"
+import { ulid } from 'ulid'
+
+const base = 'http://127.0.0.1:8080'
+const auth = { Authorization: `Bearer ${process.env.TOKEN}` }
+
+console.log(await (await fetch(`${base}/v1/health`)).json())
+
+async function post(path: string, key: string, body: unknown) {
+  const r = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: { ...auth, 'Idempotency-Key': key, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return { status: r.status, body: await r.json() }
+}
+```
+
+Run it with `node client.ts` (Node 22.18 or later) or `npx tsx client.ts`.
+
+```text
+{ status: 'ok' }
+```
+
+</TabItem>
+<TabItem label="REST">
+
+```sh
 curl -s http://127.0.0.1:8080/v1/health
 curl -s http://127.0.0.1:8080/v1/streams/support/entries
 ```
@@ -73,13 +159,75 @@ curl -s http://127.0.0.1:8080/v1/streams/support/entries
 {"error":{"code":"TENBRI_UNAUTHENTICATED","message":"send Authorization: Bearer <token>"}}
 ```
 
+</TabItem>
+</Tabs>
+
 Only `/v1/health` and `/v1/ready` answer without a token.
 
 ## 3. Write an intent
 
 Every write carries an `Idempotency-Key`: the entry id, a ULID your client generates. `kind` and
 `phase` come from the route, `principal` from the token, `source` defaults to `sdk` and
-`durability` to `local`.
+`durability` to `local`. The response comes back once the intent is durable, so the action can
+run.
+
+Send the same request again (a retry after a timeout, say) and you get the original entry back,
+with status 200 and `"replayed":true`, instead of a second entry. A first write answers 201.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="client.py"
+intent_id = str(ULID())  # the Idempotency-Key, which becomes the entry id
+draft = {
+    "action": {"type": "issue_refund", "target": "stripe:charge/ch_3PqX"},
+    "inputs": [{
+        "ref": "policy:refund",
+        "version": "14",
+        "digest": "hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa",
+    }],
+}
+r = client.post("/v1/streams/support/intents", json=draft, headers={"Idempotency-Key": intent_id})
+print(r.status_code, r.json()["entry"]["seq"], r.json()["replayed"])
+
+# A retry with the same key and draft returns the original entry.
+r = client.post("/v1/streams/support/intents", json=draft, headers={"Idempotency-Key": intent_id})
+print(r.status_code, r.json()["entry"]["seq"], r.json()["replayed"])
+```
+
+```text
+201 3 False
+200 3 True
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="client.ts"
+const intentId = ulid() // the Idempotency-Key, which becomes the entry id
+const draft = {
+  action: { type: 'issue_refund', target: 'stripe:charge/ch_3PqX' },
+  inputs: [{
+    ref: 'policy:refund',
+    version: '14',
+    digest: 'hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa',
+  }],
+}
+let r = await post('/v1/streams/support/intents', intentId, draft)
+console.log(r.status, r.body.entry.seq, r.body.replayed)
+
+// A retry with the same key and draft returns the original entry.
+r = await post('/v1/streams/support/intents', intentId, draft)
+console.log(r.status, r.body.entry.seq, r.body.replayed)
+```
+
+```text
+201 3 false
+200 3 true
+```
+
+</TabItem>
+<TabItem label="REST">
 
 ```sh
 curl -s -X POST http://127.0.0.1:8080/v1/streams/support/intents \
@@ -90,12 +238,10 @@ curl -s -X POST http://127.0.0.1:8080/v1/streams/support/intents \
 ```
 
 ```text
-{"entry":{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"durability":"local","id":"01K7ZJ4Q3V8M2R6T9W1X5Y7Z0A","inputs":[{"digest":"hmac-sha256:9f2c41aa…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent","prev":"sha256:557159f2…","principal":{"id":"support-assistant","kind":"agent"},"seq":3,"sig":"ed25519:7b39a352…","signer":"sess:2026-10-20:b7d7adc39198","source":"sdk","stream":"tnb1:bb63fd4f0deb4a5220d91220c3088e00","ts":"2026-10-20T14:08:57.436Z","v":1},"replayed":false}
+{"entry":{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"durability":"local","id":"01K7ZJ4Q3V8M2R6T9W1X5Y7Z0A","inputs":[{"digest":"hmac-sha256:9f2c41aa…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent","prev":"sha256:058f1766…","principal":{"id":"support-assistant","kind":"agent"},"seq":3,"sig":"ed25519:6ecb41ab…","signer":"sess:2026-10-20:9eeb8f7a4387","source":"sdk","stream":"tnb1:5fb73e66e6240e0f873162fafd1480c4","ts":"2026-10-20T14:48:19.075Z","v":1},"replayed":false}
 ```
 
-The response comes back once the intent is durable, so the action can run. Send the same request
-again (a retry after a timeout, say) and you get the original entry back, with status 200 and
-`"replayed":true`, instead of a second entry:
+The same request again, with the status code printed:
 
 ```sh
 curl -s -w '\n%{http_code}\n' -X POST http://127.0.0.1:8080/v1/streams/support/intents \
@@ -110,7 +256,10 @@ curl -s -w '\n%{http_code}\n' -X POST http://127.0.0.1:8080/v1/streams/support/i
 200
 ```
 
-A first write answers 201. Reusing the key for a different draft is refused with 409:
+</TabItem>
+</Tabs>
+
+Reusing a key for a different draft is refused with 409:
 
 ```text
 {"error":{"code":"TENBRI_IDEMPOTENCY_CONFLICT","message":"id 01K7ZJ4Q3V8M2R6T9W1X5Y7Z0A was used for a different entry"}}
@@ -122,6 +271,37 @@ A first write answers 201. Reusing the key for a different draft is refused with
 An outcome needs only `intent` and `status`; `principal`, `action`, `subject` and `source` default
 to the intent's.
 
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="client.py"
+r = client.post(
+    "/v1/streams/support/outcomes",
+    json={"intent": intent_id, "status": "ok"},
+    headers={"Idempotency-Key": str(ULID())},
+)
+print(r.status_code, r.json()["entry"]["seq"], r.json()["entry"]["status"])
+```
+
+```text
+201 4 ok
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="client.ts"
+r = await post('/v1/streams/support/outcomes', ulid(), { intent: intentId, status: 'ok' })
+console.log(r.status, r.body.entry.seq, r.body.entry.status)
+```
+
+```text
+201 4 ok
+```
+
+</TabItem>
+<TabItem label="REST">
+
 ```sh
 curl -s -X POST http://127.0.0.1:8080/v1/streams/support/outcomes \
   -H "Authorization: Bearer $TOKEN" \
@@ -131,13 +311,47 @@ curl -s -X POST http://127.0.0.1:8080/v1/streams/support/outcomes \
 ```
 
 ```text
-{"entry":{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01K7ZJ4R8N2B6C4D9E1F3G5H7J","intent":"01K7ZJ4Q3V8M2R6T9W1X5Y7Z0A","kind":"decision","phase":"outcome","prev":"sha256:648d0fc5…","principal":{"id":"support-assistant","kind":"agent"},"seq":4,"sig":"ed25519:93296239…","signer":"sess:2026-10-20:b7d7adc39198","source":"sdk","status":"ok","stream":"tnb1:bb63fd4f0deb4a5220d91220c3088e00","ts":"2026-10-20T14:08:57.497Z","v":1},"replayed":false}
+{"entry":{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01K7ZJ4R8N2B6C4D9E1F3G5H7J","intent":"01K7ZJ4Q3V8M2R6T9W1X5Y7Z0A","kind":"decision","phase":"outcome","prev":"sha256:eb1d77d2…","principal":{"id":"support-assistant","kind":"agent"},"seq":4,"sig":"ed25519:e8a4f169…","signer":"sess:2026-10-20:9eeb8f7a4387","source":"sdk","status":"ok","stream":"tnb1:5fb73e66e6240e0f873162fafd1480c4","ts":"2026-10-20T14:48:19.133Z","v":1},"replayed":false}
 ```
+
+</TabItem>
+</Tabs>
 
 ## 5. List entries
 
 `GET /v1/streams/{stream}/entries` filters by `input`, `action`, `principal`, `target`, `subject`
-and `after_seq`, with `limit` (default 100, at most 1000).
+and `after_seq`, with `limit` (default 100, at most 1000). `?action=issue_refund` returns both the
+intent and the outcome.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="client.py"
+r = client.get("/v1/streams/support/entries", params={"input": "policy:refund@14"})
+for m in r.json()["entries"]:
+    print(m["verification"], m["entry"]["seq"], m["entry"]["phase"], m["entry"]["id"])
+```
+
+```text
+verified 3 intent 01M5CWJKH0J5J2Z1SHT9S1PCT3
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="client.ts"
+const list = await fetch(`${base}/v1/streams/support/entries?input=policy:refund@14`, { headers: auth })
+for (const m of (await list.json()).entries) {
+  console.log(m.verification, m.entry.seq, m.entry.phase, m.entry.id)
+}
+```
+
+```text
+verified 3 intent 01M5CWK1Z6N2C0W7JF5TKN41K9
+```
+
+</TabItem>
+<TabItem label="REST">
 
 ```sh
 curl -s "http://127.0.0.1:8080/v1/streams/support/entries?input=policy:refund@14" \
@@ -145,16 +359,67 @@ curl -s "http://127.0.0.1:8080/v1/streams/support/entries?input=policy:refund@14
 ```
 
 ```text
-{"entries":[{"verification":"verified","entry":{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"durability":"local","id":"01K7ZJ4Q3V8M2R6T9W1X5Y7Z0A","inputs":[{"digest":"hmac-sha256:9f2c41aa…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent",…,"seq":3,…}}]}
+{"entries":[{"verification":"verified","entry":{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"durability":"local","id":"01K7ZJ4Q3V8M2R6T9W1X5Y7Z0A",…,"phase":"intent",…,"seq":3,…},"seq":3,"hash":"sha256:eb1d77d2…"}],"as_of":{"stream":"tnb1:5fb73e66e6240e0f873162fafd1480c4","seq":4,"hash":"sha256:68f7715c…"}}
 ```
 
-`?action=issue_refund` returns both the intent and the outcome.
+</TabItem>
+</Tabs>
+
+Each match carries the entry's `seq` and `hash`; `as_of` is the head of the stream the answer was
+read from.
 
 ## 6. Tail
 
 `/tail` is a server-sent event stream: the entries after `after_seq`, then new ones as they are
 written. Each event's `id` is the entry's sequence number, so a client reconnects with
 `Last-Event-ID`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="client.py"
+with client.stream("GET", "/v1/streams/support/tail", params={"after_seq": 2}, timeout=None) as r:
+    for line in r.iter_lines():
+        if line.startswith("data: "):
+            m = json.loads(line.removeprefix("data: "))
+            print(m["verification"], m["entry"]["seq"], m["entry"]["phase"])
+            if m["entry"]["phase"] == "outcome":
+                break  # stop after the first outcome; drop this to follow forever
+```
+
+```text
+verified 3 intent
+verified 4 outcome
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="client.ts"
+const tail = await fetch(`${base}/v1/streams/support/tail?after_seq=2`, { headers: auth })
+const decoder = new TextDecoder()
+let buffer = ''
+read: for await (const chunk of tail.body!) {
+  buffer += decoder.decode(chunk, { stream: true })
+  let nl
+  while ((nl = buffer.indexOf('\n')) >= 0) {
+    const line = buffer.slice(0, nl)
+    buffer = buffer.slice(nl + 1)
+    if (!line.startsWith('data: ')) continue
+    const m = JSON.parse(line.slice(6))
+    console.log(m.verification, m.entry.seq, m.entry.phase)
+    if (m.entry.phase === 'outcome') break read // stop after the first outcome; drop this to follow forever
+  }
+}
+```
+
+```text
+verified 3 intent
+verified 4 outcome
+```
+
+</TabItem>
+<TabItem label="REST">
 
 ```sh
 curl -s -N "http://127.0.0.1:8080/v1/streams/support/tail?after_seq=2" \
@@ -171,10 +436,42 @@ id: 4
 data: {"verification":"verified","entry":{…,"id":"01K7ZJ4R8N2B6C4D9E1F3G5H7J",…,"phase":"outcome",…,"seq":4,…,"status":"ok",…}}
 ```
 
+</TabItem>
+</Tabs>
+
 ## 7. Verify
 
 The server reads the whole stream from storage and checks it against its pinned key. `broken` is
 absent when the stream verifies.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python title="client.py"
+print(client.get("/v1/streams/support/verify").json())
+```
+
+```text
+{'stream': 'tnb1:d2908cab2599eb0e0d432a38465f3480', 'entries': 4, 'pinned_key': 'sha256:d2908cab2599eb0e0d432a38465f3480eb164e5e163a55a5f9d011deef4bc002'}
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts title="client.ts"
+console.log(await (await fetch(`${base}/v1/streams/support/verify`, { headers: auth })).json())
+```
+
+```text
+{
+  stream: 'tnb1:99b70d4543efa08c47f80d736ad02b36',
+  entries: 4,
+  pinned_key: 'sha256:99b70d4543efa08c47f80d736ad02b36c902681288da5d655abdd7e102190fe9'
+}
+```
+
+</TabItem>
+<TabItem label="REST">
 
 ```sh
 curl -s http://127.0.0.1:8080/v1/streams/support/verify \
@@ -182,8 +479,14 @@ curl -s http://127.0.0.1:8080/v1/streams/support/verify \
 ```
 
 ```text
-{"stream":"tnb1:bb63fd4f0deb4a5220d91220c3088e00","entries":4,"pinned_key":"sha256:bb63fd4f0deb4a5220d91220c3088e003d3810d16e4d8adf2c0eff92be8ee4e5"}
+{"stream":"tnb1:5fb73e66e6240e0f873162fafd1480c4","entries":4,"pinned_key":"sha256:5fb73e66e6240e0f873162fafd1480c4428cf030483490dabcf4f502197e9deb"}
 ```
+
+</TabItem>
+</Tabs>
+
+The Python and TypeScript outputs come from their own runs, on their own streams, so their ids
+differ from the curl run.
 
 Stop `tenbrid` with Ctrl+C. It finishes the writes in flight first:
 
@@ -191,12 +494,136 @@ Stop `tenbrid` with Ctrl+C. It finishes the writes in flight first:
 tenbrid: stopped; every acknowledged entry is durable
 ```
 
+## Over gRPC
+
+The gRPC API has the same operations and error codes as REST. Entries travel as their canonical
+JSON (`entry_json`) and drafts as JSON strings (`draft_json`); every call but health checks carries
+`authorization: Bearer <token>` metadata. The service is described in
+[`tenbri.proto`](https://github.com/tenbri/tenbri/blob/main/contract/proto/tenbri/v1/tenbri.proto);
+download it next to your client:
+
+```sh
+curl -fLO https://raw.githubusercontent.com/tenbri/tenbri/main/contract/proto/tenbri/v1/tenbri.proto
+```
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+Generate the stubs with `grpcio-tools`:
+
+```sh
+pip install grpcio grpcio-tools python-ulid
+python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. tenbri.proto
+```
+
+```python title="grpc_client.py"
+import json
+import os
+
+import grpc
+from ulid import ULID
+
+import tenbri_pb2 as pb
+import tenbri_pb2_grpc
+
+channel = grpc.insecure_channel("127.0.0.1:8081")
+api = tenbri_pb2_grpc.TenbriServiceStub(channel)
+auth = [("authorization", f"Bearer {os.environ['TOKEN']}")]
+
+intent_id = str(ULID())  # the idempotency key, which becomes the entry id
+draft = {"action": {"type": "issue_refund", "target": "stripe:charge/ch_3PqX"}}
+r = api.AppendIntent(
+    pb.AppendIntentRequest(stream="support", idempotency_key=intent_id, draft_json=json.dumps(draft)),
+    metadata=auth,
+)
+print("intent ", json.loads(r.appended.entry_json)["seq"], "replayed:", r.appended.replayed)
+
+r = api.AppendOutcome(
+    pb.AppendOutcomeRequest(
+        stream="support",
+        idempotency_key=str(ULID()),
+        draft_json=json.dumps({"intent": intent_id, "status": "ok"}),
+    ),
+    metadata=auth,
+)
+print("outcome", json.loads(r.appended.entry_json)["seq"])
+
+v = api.VerifyStream(pb.VerifyStreamRequest(stream="support"), metadata=auth)
+print("broken:" if v.HasField("broken") else "verified", v.entries, "entries, pinned to", v.pinned_key)
+```
+
+```text
+intent  3 replayed: False
+outcome 4
+verified 4 entries, pinned to sha256:07c2b3fa9a27514503d4e4f2e2a55001ff86cd0260616b6a10fa26dba37ae65a
+```
+
+A wrong token raises `grpc.RpcError` with `StatusCode.UNAUTHENTICATED` and the details
+`unknown token`.
+
+</TabItem>
+<TabItem label="TypeScript">
+
+Load the proto at runtime with `@grpc/proto-loader`; no code generation:
+
+```sh
+npm install @grpc/grpc-js @grpc/proto-loader ulid
+```
+
+```ts title="grpc-client.ts"
+import * as grpc from '@grpc/grpc-js'
+import * as protoLoader from '@grpc/proto-loader'
+import { promisify } from 'node:util'
+import { ulid } from 'ulid'
+
+const def = protoLoader.loadSync('tenbri.proto', { defaults: true })
+const { tenbri } = grpc.loadPackageDefinition(def) as any
+const api = new tenbri.v1.TenbriService('127.0.0.1:8081', grpc.credentials.createInsecure())
+const auth = new grpc.Metadata()
+auth.set('authorization', `Bearer ${process.env.TOKEN}`)
+const call = (method: string, req: object) => promisify(api[method].bind(api))(req, auth) as Promise<any>
+
+const intentId = ulid() // the idempotency key, which becomes the entry id
+const draft = { action: { type: 'issue_refund', target: 'stripe:charge/ch_3PqX' } }
+let r = await call('AppendIntent', { stream: 'support', idempotencyKey: intentId, draftJson: JSON.stringify(draft) })
+console.log('intent ', JSON.parse(r.appended.entryJson).seq, 'replayed:', r.appended.replayed)
+
+r = await call('AppendOutcome', {
+  stream: 'support',
+  idempotencyKey: ulid(),
+  draftJson: JSON.stringify({ intent: intentId, status: 'ok' }),
+})
+console.log('outcome', JSON.parse(r.appended.entryJson).seq)
+
+const v = await call('VerifyStream', { stream: 'support' })
+console.log(v.broken ? 'broken:' : 'verified', Number(v.entries), 'entries, pinned to', v.pinnedKey)
+api.close()
+```
+
+```text
+intent  3 replayed: false
+outcome 4
+verified 4 entries, pinned to sha256:ddcabc1dfb2d364e97c1285bfbf0933a39852d38293afb9363147b9de991e79d
+```
+
+`{ defaults: true }` makes `replayed: false` appear instead of being left out.
+
+</TabItem>
+</Tabs>
+
+Each gRPC run used a fresh stream, so its seq numbers start at 3.
+
 ## What happened
 
 `tenbrid` signed and chained each entry exactly as `tenbri append` does, using the stream's session
 key from `TENBRI_KEYS`, and stamped the token's principal on it. The `Idempotency-Key` became the
 entry id, which makes retries safe. The stream on disk is a normal stream: `tenbri verify
 audit/support --key …` checks it without the server.
+
+<Aside type="tip">
+A Python or Node agent on the same machine as the stream can skip the server and write in process
+with the `tenbri` package: see [Write from code](/docs/examples/rust-writer/).
+</Aside>
 
 Related: [API reference](/docs/reference/api/) · [Streams and entries](/docs/concepts/streams-and-entries/) ·
 [Errors](/docs/reference/errors/) · [Keys](/docs/concepts/keys/)

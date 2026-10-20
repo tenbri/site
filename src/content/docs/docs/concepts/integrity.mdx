@@ -1,11 +1,11 @@
 ---
 title: Integrity
-description: How Tenbri makes edits detectable, with canonical bytes, a hash chain, signatures, HEAD and Merkle checkpoints.
+description: How Tenbri makes edits detectable, with canonical bytes, a hash chain, signatures, HEAD, Merkle checkpoints, timestamps and receipts.
 sidebar:
   order: 2
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
 A stream cannot vouch for itself. Tenbri makes every change detectable by a verifier that holds a
 **trust root**: the fingerprint of the stream's genesis key, and any checkpoint it saw before.
@@ -118,19 +118,82 @@ latest checkpoint it wrote next to the keys (`checkpoint.note` in the stream's k
 refuses to open a stream that fails against it: an older HEAD put back by someone with access to
 the store fails with `truncated`.
 
-<Aside type="note">
-`tenbri checkpoint <stream>`, which seals a checkpoint on demand, is on the `main` branch and not
-in `0.1.0-alpha.2`. The 60 seconds count from when the writer opened the stream or last wrote a
-checkpoint, so a one-shot `tenbri append` does not write one. A long-running writer (`tenbrid`,
-the Rust `Writer`) does.
-</Aside>
+The 60 seconds count from when the writer opened the stream or last wrote a checkpoint, so a
+one-shot `tenbri append` does not write one. A long-running writer (`tenbrid`, the Rust `Writer`)
+does. `tenbri checkpoint` seals one on demand, covering the whole stream:
+
+```sh
+tenbri checkpoint audit/support
+```
+
+```text
+checkpoint at size 4: checkpoints/000000000004.note
+```
 
 A checkpoint only protects what it covers once someone outside the operator holds it: an auditor,
 a witness, or a verifier that saw it before.
 
+## Timestamps
+
+A checkpoint carries no time, and an entry's `ts` is only what the writer claimed. An [RFC 3161](https://www.rfc-editor.org/rfc/rfc3161)
+timestamp authority (TSA) gives it independent time: it signs a token over the checkpoint's note
+text, which shows the checkpoint existed at that time. The token is stored next to the checkpoint
+as `anchors/<size, 12 digits>.tsr` and is never rewritten.
+
+- `tenbri checkpoint <stream> --tsa <URL>` seals a checkpoint and timestamps it, printing
+  `timestamped by <URL>: anchors/<n>.tsr` (or `already timestamped: ...` if it has a token).
+- `tenbrid` with an `[anchor]` table timestamps the latest checkpoint of every stream every
+  `every_s` seconds, hourly by default ([API](/docs/reference/api/#configuration-file)).
+
+## Receipts
+
+A **receipt** is a self-contained file that proves one or more entries are in a stream: the
+entries, the stream's key history (every `key` entry up to the checkpoint, starting with the
+genesis entry), a signed checkpoint that covers them, an inclusion proof for each, and the
+checkpoint's RFC 3161 tokens if it has any. The format is in
+[spec/receipts.md](https://github.com/tenbri/tenbri/blob/main/spec/receipts.md).
+
+A verifier checks a receipt with no network and no access to the stream, against the pinned
+fingerprint. Keys inside the receipt are only ever checked against that pin.
+
+<Tabs syncKey="lang">
+<TabItem label="CLI">
+
+```sh
+tenbri receipt create audit/support --entry 3 --out receipt.json
+tenbri receipt verify receipt.json --key sha256:dc736478…
+```
+
+</TabItem>
+<TabItem label="REST">
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:7070/v1/streams/support/entries/01M5CWEGKFH78NNZ5XXH6K42NG/receipt > receipt.json
+tenbri receipt verify receipt.json --key sha256:dc736478…
+```
+
+`tenbrid` seals a checkpoint first if none covers the entry yet.
+
+</TabItem>
+</Tabs>
+
+```text
+proves seq 3 (decision intent), id 01M5CWEGKFH78NNZ5XXH6K42NG, ts 2026-10-20T14:46:33.327Z (claimed by the writer)
+in stream tnb1:dc736478ac6b04bad25e3a3a6f8d71aa, checkpoint at size 4, pinned to sha256:dc736478…; key history: 2 key entries
+```
+
+`--entry` takes a sequence number or an entry id, and can be repeated. With `--tsa-roots <PEM>`,
+`receipt verify` also checks the RFC 3161 tokens against the TSA root certificates you trust and
+prints when each says the checkpoint existed; without it, it says the tokens were not checked. A
+receipt stays valid after an [erasure](/docs/concepts/privacy/#erasure): it holds no data key.
+
+Failures are `bad_receipt`, `bad_proof` and `bad_timestamp`, plus the checkpoint and entry codes
+([Errors](/docs/reference/errors/#receipts)).
+
 <Aside type="caution" title="Planned">
-Publishing checkpoints to auditors, witnesses, RFC 3161 timestamps and receipts (self-contained
-proofs of single entries) are not in a release yet.
+Publishing checkpoints to auditors, witness cosigning and the C2SP tiled-log protocol are not built
+yet. Until then, hand checkpoints or receipts to the people who need to hold them yourself.
 </Aside>
 
 ## What verification checks
@@ -153,6 +216,53 @@ Then it checks HEAD. If the stream has checkpoints, it also checks the stream ag
 latest one. A revocation that reaches back is reported at the earliest entry it invalidates.
 
 `--key` takes the fingerprint (`sha256:…`) or the public key (`ed25519:…`) of the genesis key.
+
+The bindings and `tenbrid` run the same checks:
+
+<Tabs syncKey="lang">
+<TabItem label="CLI">
+
+```sh
+tenbri verify audit/support --key sha256:dc736478ac6b04bad25e3a3a6f8d71aa6cb2819729c01ce71b644ea250282154
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from tenbri import Tenbri
+
+log = Tenbri.open("audit/support")
+report = log.verify("sha256:dc736478ac6b04bad25e3a3a6f8d71aa6cb2819729c01ce71b644ea250282154")
+print(report.ok, report.entries, report.checkpoint, report.broken)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+import { Tenbri } from 'tenbri'
+
+const log = await Tenbri.open('audit/support')
+const report = await log.verify('sha256:dc736478ac6b04bad25e3a3a6f8d71aa6cb2819729c01ce71b644ea250282154')
+console.log(report.ok, report.entries, report.checkpoint, report.broken)
+```
+
+</TabItem>
+<TabItem label="REST">
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:7070/v1/streams/support/verify
+```
+
+`tenbrid` checks against the stream's configured pin (`streams.<name>.key`).
+
+</TabItem>
+</Tabs>
+
+`report.ok` is true only when nothing is broken and a key was pinned. `broken` holds the first
+broken `seq`, the error `code` and a message, for example `untrusted_root` when the pin is not the
+genesis key.
 
 ### Exit codes
 

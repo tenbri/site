@@ -7,7 +7,9 @@ sidebar:
 
 import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-Each recipe below was run end to end against `tenbri` and `tenbrid` `0.1.0-alpha.2`; the outputs shown are real, except where a recipe says a step was not run.
+Each recipe below was run end to end; the outputs shown are real, except where a recipe says a step
+was not run. Every recipe offers CLI, Python and TypeScript tabs, plus REST and Rust tabs where
+they fit, and the language you pick is remembered across pages.
 
 <CardGrid>
   <LinkCard
@@ -33,16 +35,16 @@ Each recipe below was run end to end against `tenbri` and `tenbrid` `0.1.0-alpha
   <LinkCard
     title="tenbrid over REST"
     href="/docs/examples/tenbrid-rest/"
-    description="Run tenbrid locally and write, list, tail and verify entries with curl."
+    description="Run tenbrid locally, then write, list, tail and verify entries with curl, Python, TypeScript or gRPC."
   />
   <LinkCard
     title="Streams on object storage"
     href="/docs/examples/object-storage/"
-    description="Keep a stream in S3, Cloudflare R2 or MinIO instead of a local directory."
+    description="Keep a stream in S3, Cloudflare R2 or MinIO, and write it from the CLI, Python or TypeScript."
   />
   <LinkCard
-    title="Write from Rust"
+    title="Write from code"
     href="/docs/examples/rust-writer/"
-    description="Embed tenbri-writer in a Rust program: create a stream, record a decision, verify."
+    description="Record decisions in process from Python, TypeScript or Rust: context managers, callbacks, decorators and the raw writer."
   />
 </CardGrid>

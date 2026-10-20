@@ -113,6 +113,25 @@ read or copy the log cannot sign as it.
   Object Lock bucket, nor in its backups. See [Privacy](/docs/concepts/privacy/) and
   [Keys](/docs/concepts/keys/).
 
+## Query index
+
+`tenbri query` and `tenbrid` answer queries from an index of each stream: a derived view, kept on
+the machine that queries, never in the stream. Deleting it loses nothing; `tenbri index rebuild`
+makes it again from the batches.
+
+| Backend | Files | Chosen by |
+| --- | --- | --- |
+| SQLite (default) | `index.sqlite` | `tenbri index rebuild`, `streams.<name>.index = "sqlite"` in `tenbrid` |
+| Parquet | `parquet/`, files any Arrow tool reads | `tenbri index rebuild --backend parquet`, `streams.<name>.index = "parquet"` |
+
+Each stream's index is in `<index dir>/<stream id with ':' as '-'>/`. The index directory is
+`$TENBRI_INDEX_DIR` (`index_dir` in `tenbrid`), else the user's cache directory:
+`~/Library/Caches/tenbri/index` on macOS, `$XDG_CACHE_HOME/tenbri/index` or
+`~/.cache/tenbri/index` on Linux, `%LOCALAPPDATA%\tenbri\index` on Windows.
+
+The index holds refs, targets and subject handles in plaintext. `tenbri erase` deletes the erased
+subject's rows, and a rebuild leaves them out ([Privacy](/docs/concepts/privacy/#erasure)).
+
 ## Layout of a stream
 
 ```text

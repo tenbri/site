@@ -7,8 +7,9 @@ sidebar:
 
 import { Aside } from '@astrojs/starlight/components';
 
-`tenbri` creates streams, appends entries, verifies, queries and follows them, and checks them
-against action schemas. It ships with the `keychain` and `s3` Cargo features on by default.
+`tenbri` creates streams, appends entries, verifies, queries and follows them, seals checkpoints,
+makes and checks receipts, manages data keys and erasure, and checks streams against action
+schemas. It ships with the `keychain` and `s3` Cargo features on by default.
 
 ```text
 tenbri [--keys DIR] <COMMAND>
@@ -116,27 +117,84 @@ code is still 3. Codes are listed in [Errors](/docs/reference/errors/).
 
 ## query
 
-Print entries by input or action, each with its verification status, one JSON per line.
+Print the entries matching every filter given, in sequence order, one JSON per line, each with its
+verification status, seq, entry hash and what the answer is current to.
 
 ```text
-tenbri query <PATH> [--input REF@VERSION]... [--action TYPE] [--key FINGERPRINT]
+tenbri query <PATH> [--input REF@VERSION]... [--action TYPE] [--principal KIND:ID] [--target TARGET]
+                    [--subject HANDLE] [--rule REF@VERSION] [--since TIME] [--until TIME]
+                    [--trace TRACE_ID] [--status STATUS] [--after SEQ] [--limit N] [--verify]
+                    [--key FINGERPRINT]
 ```
 
 | Flag | Meaning |
 | --- | --- |
-| `--input REF@VERSION` | An input the entry used, as `ref@version` (`policy:refund@14`). Split at the last `@`. Repeat to require several. |
+| `--input REF@VERSION` | An input the entry used, as `ref@version` (`policy:refund@14`), or `ref` for any version. Repeat to require several. |
 | `--action TYPE` | The action type (`reply_ticket`) |
+| `--principal KIND:ID` | The principal (`agent:support-assistant`) |
+| `--target TARGET` | The action target, exactly |
+| `--subject HANDLE` | The subject handle |
+| `--rule REF@VERSION` | The rule, as `ref@version`, or `ref` for any version |
+| `--since TIME` | Entries at or after this time: `2026-10-20T09:00:00.000Z`, `2026-10-20T09:00:00Z`, `2026-10-20` (midnight UTC), or a duration ago (`90s`, `15m`, `1h`, `7d`). Compared with `ts`, the writer's claimed time. |
+| `--until TIME` | Entries before this time, in the same forms |
+| `--trace TRACE_ID` | The OpenTelemetry trace id |
+| `--status STATUS` | An outcome's status: `ok`, `error`, `refused` or `unknown` |
+| `--after SEQ` | Only entries after this sequence number, the cursor of the previous page. Default `0`. |
+| `--limit N` | At most this many entries. When more match, `tenbri: more entries match; next page: --after <seq>` goes to stderr. |
+| `--verify` | Check the index's answers against the stream, read and verified in full |
 | `--key FINGERPRINT` | Pin the stream's genesis key |
 
 Every filter given must match. Output, one line per matching entry:
 
 ```json
-{"verification":"verified","entry":{...}}
+{"verification":"indexed","entry":{...},"seq":4,"hash":"sha256:bcf0853b…","as_of":{"stream":"tnb1:dc736478ac6b04bad25e3a3a6f8d71aa","seq":4,"hash":"sha256:bcf0853b…","checkpoint":4}}
 ```
 
-`verification` is `verified` with `--key`, `unpinned` without. If the stream does not verify,
-`query` prints `tenbri: the stream does not verify: broken at seq <n>: ...` and exits 1. A
-malformed `--input` exits 2 with `--input <value>: expected ref@version`.
+`seq` and `hash` are the entry's sequence number and entry hash. `as_of` is what the answer is
+current to: the stream, the last sequence number read, its entry hash and, from an index, the size
+of the latest checkpoint at or below it.
+
+Where the answer comes from decides `verification`:
+
+| Case | How `query` reads | `verification` |
+| --- | --- | --- |
+| No index | Reads and verifies the whole stream | `verified` with `--key`, `unpinned` without |
+| An index (see [index rebuild](#index-rebuild)) | Brings the index up to HEAD, then answers from it | `indexed` |
+| An index and `--verify` | Also reads and verifies the whole stream and checks each answer's entry hash against it | `verified` with `--key`, `unpinned` without |
+
+If the stream does not verify, `query` prints `tenbri: the stream does not verify: broken at seq
+<n>: ...` and exits 1. With `--verify`, an index that disagrees with the stream exits 1 with
+``the index disagrees with the stream at seq <n>: run `tenbri index rebuild` ``. A time that does
+not parse exits 2 with `--since <value>: expected a time (2026-10-20T09:00:00Z, 2026-10-20) or a
+duration (1h)`.
+
+## index rebuild
+
+Delete the stream's index and build it again from every batch.
+
+```text
+tenbri index rebuild <PATH> [--backend sqlite|parquet]
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--backend` | `sqlite` | `sqlite` (one file, `index.sqlite`) or `parquet` (a `parquet/` directory any Arrow tool reads) |
+
+The index is a derived view that `query` uses; deleting it loses nothing. It lives in
+`$TENBRI_INDEX_DIR`, else the user's cache directory (`~/Library/Caches/tenbri/index` on macOS,
+`$XDG_CACHE_HOME/tenbri/index` or `~/.cache/tenbri/index` elsewhere, `%LOCALAPPDATA%\tenbri\index`
+on Windows), one directory per stream named after its id with `:` as `-`. Once it exists, every
+`query` brings it up to HEAD first. Entries of a subject whose keys were erased are left out, and
+`tenbri erase` deletes that subject's rows from an existing index.
+
+Output:
+
+```text
+indexed 4 entries of tnb1:dc736478ac6b04bad25e3a3a6f8d71aa (sqlite) at <index dir>/tnb1-dc736478ac6b04bad25e3a3a6f8d71aa
+latest checkpoint: size 4
+```
+
+The second line appears when the stream has a checkpoint.
 
 ## tail
 
@@ -156,10 +214,6 @@ Output: each entry as canonical JSON on one line. While following, `tail` polls 
 500 ms. A stream that stops verifying exits 1.
 
 ## checkpoint
-
-:::caution[Unreleased]
-On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
-:::
 
 Seal and sign a checkpoint of the whole stream now; with `--tsa`, timestamp it (RFC 3161).
 
@@ -183,10 +237,6 @@ The second line appears with `--tsa`; if the checkpoint already has a token, it 
 
 ## receipt create
 
-:::caution[Unreleased]
-On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
-:::
-
 Write a receipt for entries of a stream: the entries, the stream's key history, a signed checkpoint
 covering them with their inclusion proofs, and its RFC 3161 token if it has one.
 
@@ -203,10 +253,6 @@ tenbri receipt create <PATH> --entry SEQ|ID [--entry ...] [--out FILE] [--key FI
 Exits 1 with `the stream does not verify: ...` when the stream is broken.
 
 ## receipt verify
-
-:::caution[Unreleased]
-On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
-:::
 
 Check a receipt offline against a pinned stream key: no network, no access to the stream.
 
@@ -249,10 +295,6 @@ Output and exit codes are in [Action schemas](/docs/reference/schemas/#tenbri-sc
 
 ## erase
 
-:::caution[Unreleased]
-On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
-:::
-
 Delete a subject's data keys, so its bodies and input digests can no longer be read or confirmed,
 and record the erasure in the stream. The chain, checkpoints and receipts still verify.
 
@@ -271,13 +313,17 @@ tenbri erase <PATH> (--subject HANDLE | --tenant) --reason REASON [--by ID] [--y
 Exactly one of `--subject` and `--tenant`. Without `--yes`, `erase` asks you to type the handle (or
 `tenant`); anything else exits 2 with `not confirmed; nothing was erased`.
 
+The stream must verify and this machine must hold a key to sign with before anything is deleted.
+With `--subject`, the subject's rows are also deleted from the stream's query index, if it has
+one.
+
 Output: `erased <subject HANDLE | tenant>: <n> data key epochs deleted; erasure recorded at seq <seq>`.
 
-## keys list
+```text
+erased subject subj_7f3c91d2: 2 data key epochs deleted; erasure recorded at seq 7
+```
 
-:::caution[Unreleased]
-On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
-:::
+## keys list
 
 List the signing keys and the data keys (subjects and key epochs); never a secret.
 
@@ -296,10 +342,6 @@ data keys (<data key directory>):
 
 ## keys export
 
-:::caution[Unreleased]
-On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
-:::
-
 Print a subject's data keys as JSON, for a backup kept apart from the log.
 
 ```text
@@ -310,11 +352,11 @@ tenbri keys export <PATH> (--subject HANDLE | --tenant) [--digest]
 | --- | --- |
 | `--digest` | Only the digest keys: enough to confirm input digests, never to open a body |
 
-## keys rotate
+Output: `{"epochs": [{"created", "epoch", "key"}...], "stream", "subject"}`, pretty-printed; with
+`--digest`, each epoch has `digest_key` instead of `key`. With no key held (erased, or never made
+here), it exits 2 with `no data key for subject "<HANDLE>": erased, or never held here`.
 
-:::caution[Unreleased]
-On the `main` branch, not in `0.1.0-alpha.2`. Build from source to use it.
-:::
+## keys rotate
 
 Start a new data key epoch for a subject and record it in the stream. Older epochs keep opening
 older data until erased.
@@ -323,11 +365,15 @@ older data until erased.
 tenbri keys rotate <PATH> (--subject HANDLE | --tenant) [--by ID]
 ```
 
-Output: `<subject HANDLE | tenant>: new data key epoch <n>, recorded at seq <seq>`.
+| Flag | Meaning |
+| --- | --- |
+| `--by ID` | Who rotated, recorded as the note's principal (a person id) |
 
-<Aside type="caution" title="Pre-release">
-`checkpoint`, `receipt`, `erase` and `keys` are on the `main` branch and not in the `0.1.0-alpha.2`
-release. `gc`, `export`, `mcp`, `proxy` and `ingest` are planned and not built.
+Output: `<subject HANDLE | tenant>: new data key epoch <n>, recorded at seq <seq>`. These are data
+keys; the CLI does not rotate signing keys ([Keys](/docs/concepts/keys/#rotation)).
+
+<Aside type="caution" title="Planned">
+`gc`, `export`, `mcp`, `proxy` and `ingest` are planned and not built.
 </Aside>
 
 ## Exit codes
@@ -337,7 +383,7 @@ Stable from 0.1.0.
 | Code | Meaning |
 | --- | --- |
 | `0` | Success |
-| `1` | The stream does not verify, or does not match the `--checkpoint` given (truncated behind it, rewritten, or not signed by the stream); the first broken sequence number is printed. Also: `schema check` found an entry that breaks its action's schema; `receipt verify` found a receipt that does not verify; `query`, `tail` or `receipt create` read a stream that does not verify. |
+| `1` | The stream does not verify, or does not match the `--checkpoint` given (truncated behind it, rewritten, or not signed by the stream); the first broken sequence number is printed. Also: `schema check` found an entry that breaks its action's schema; `receipt verify` found a receipt that does not verify; `query`, `tail` or `receipt create` read a stream that does not verify; `query --verify` found the index disagreeing with the stream. |
 | `2` | Any other error, a malformed checkpoint file among them |
 | `3` | `verify` without `--key`: the stream is consistent with its own genesis key, which proves nothing about who wrote it |
 
@@ -348,6 +394,8 @@ Stable from 0.1.0.
 | `TENBRI_KEYS` | Keys directory when `--keys` is not given |
 | `XDG_CONFIG_HOME`, `HOME` | Default keys directory (`$XDG_CONFIG_HOME/tenbri/keys`, else `~/.config/tenbri/keys`) |
 | `APPDATA` | Default keys directory on Windows |
+| `TENBRI_INDEX_DIR` | Where query indexes live |
+| `XDG_CACHE_HOME`, `LOCALAPPDATA` | Default index directory (`$XDG_CACHE_HOME/tenbri/index`, else `~/.cache/tenbri/index`; `~/Library/Caches/tenbri/index` on macOS; `%LOCALAPPDATA%\tenbri\index` on Windows) |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` and the other `AWS_*` | Credentials for `s3://` and `r2://` |
 | `AWS_ENDPOINT_URL`, `AWS_ALLOW_HTTP` | S3-compatible endpoint (MinIO); `AWS_ALLOW_HTTP=true` for plain HTTP |
 | `CLOUDFLARE_ACCOUNT_ID` | R2 endpoint, when `AWS_ENDPOINT_URL` is not set |

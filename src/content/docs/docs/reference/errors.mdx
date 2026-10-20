@@ -6,8 +6,8 @@ sidebar:
 ---
 
 Format v1 names every failure with a stable lowercase code. The same codes appear in the CLI, in
-`tenbrid` responses and in the libraries. `tenbrid` also has its own request error codes
-(`TENBRI_*`), listed in [API](/docs/reference/api/#errors).
+`tenbrid` responses and in the libraries. `tenbrid` and the Python and TypeScript bindings also share request error
+codes (`TENBRI_*`), listed in [API](/docs/reference/api/#errors).
 
 ## Where you see them
 
@@ -21,6 +21,7 @@ Format v1 names every failure with a stable lowercase code. The same codes appea
 | `tenbrid` append | `TENBRI_INVALID_ENTRY` (400), with the code in `error.reason`; nothing is written | `"reason": "bad_intent"` |
 | `tenbrid` verify | `broken.code` in the `GET /v1/streams/{stream}/verify` report | `"code": "bad_signature"` |
 | `tenbrid` writes to a broken stream | `TENBRI_STREAM_BROKEN` (500), with the code in `error.reason` | |
+| Python and TypeScript bindings | `verify()` returns a report whose `broken` holds `seq`, `code` and `message`; failed writes raise `TenbriError` subclasses (`InvalidEntryError`, `StreamBrokenError`, ...) with the `TENBRI_*` code in `.code` and the format code in `.reason` | `report.broken.code == "untrusted_root"` |
 
 Schema violations from `tenbri.toml` are not format codes: they are reported as
 `<path>: <message>` (see [Action schemas](/docs/reference/schemas/#violations)).

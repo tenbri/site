@@ -1,171 +1,590 @@
 ---
 title: Record a refund
-description: Record a human approval, the agent's refund intent that cites it, and the outcome, then read them back.
+description: Record a human approval, the agent's refund intent that cites it, and the outcome, then read them back and verify the stream.
 sidebar:
   order: 1
 ---
 
-A support agent wants to refund a charge. A person, Alice, approves it first. You will record three
-entries with the `tenbri` CLI: Alice's `approval`, the agent's `intent` that names that approval by
-its entry hash, and the `outcome` with `status: ok`. Then you read them back with `tail` and
-`query`, and verify the stream.
+import { Aside, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-**Prerequisites:** the `tenbri` CLI ([install](/docs/getting-started/install/)), `jq`, and
-`shasum` (or `sha256sum`).
+A support agent wants to refund a charge, and a person, Alice, approves it first. You will record
+three entries: Alice's `approval`, the agent's `intent` that cites the approval by its entry hash
+and names the policy and rule it relied on, and the `outcome` once the refund ran. Then you read
+them back and verify the stream against its pinned fingerprint. Pick a language once: every tab on
+the page follows it.
 
-## 1. Create the stream
+## Prerequisites
 
-Keys live in `$TENBRI_KEYS` (default `~/.config/tenbri/keys`), never inside the stream. This
-recipe keeps them next to it, in `./keys`.
+- A shell with `jq` and `openssl` (for the CLI and REST tabs).
+- The tool for your language:
+
+<Tabs syncKey="lang">
+<TabItem label="CLI">
+
+```sh
+cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+```
+
+</TabItem>
+<TabItem label="Python">
+
+Python 3.10 or later.
+
+<Tabs syncKey="py-pkg">
+<TabItem label="pip">
+
+```sh
+pip install --pre tenbri
+```
+
+</TabItem>
+<TabItem label="uv">
+
+```sh
+uv add --prerelease allow tenbri
+```
+
+</TabItem>
+<TabItem label="poetry">
+
+```sh
+poetry add --allow-prereleases tenbri
+```
+
+</TabItem>
+</Tabs>
+
+</TabItem>
+<TabItem label="TypeScript">
+
+Node 22.18 or later, which runs `.ts` files directly, in a project with `"type": "module"`
+(`npm pkg set type=module`).
+
+<Tabs syncKey="js-pkg">
+<TabItem label="npm">
+
+```sh
+npm install tenbri@next
+```
+
+</TabItem>
+<TabItem label="pnpm">
+
+```sh
+pnpm add tenbri@next
+```
+
+</TabItem>
+<TabItem label="yarn">
+
+```sh
+yarn add tenbri@next
+```
+
+</TabItem>
+<TabItem label="bun">
+
+```sh
+bun add tenbri@next
+```
+
+</TabItem>
+</Tabs>
+
+</TabItem>
+<TabItem label="REST">
+
+`curl`, plus the `tenbri` CLI to create the stream and `tenbrid` to serve it:
+
+```sh
+cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+cargo install tenbri-server --version 0.1.0-beta.1 --locked
+```
+
+</TabItem>
+</Tabs>
+
+Set these in every terminal you use. Keys live in `$TENBRI_KEYS`, never inside the stream; this
+recipe keeps them in `./keys`. The digest key keys the HMAC of each input the agent read, so a
+guessed policy text cannot be confirmed from the log without it.
 
 ```sh
 export TENBRI_KEYS=./keys
-tenbri init audit/support
+export TENBRI_DIGEST_KEY='a 32-byte secret, kept apart....'
 ```
 
-```text
-created stream tnb1:df45634fd5c68a9fc1062f17755cad7f at audit/support
-stream key fingerprint (pin it): sha256:df45634fd5c68a9fc1062f17755cad7f5d1d1ff3a86b0fbafc69bf1f744a8406
-keys: ./keys/tnb1-df45634fd5c68a9fc1062f17755cad7f
-verify with: tenbri verify audit/support --key sha256:df45634fd5c68a9fc1062f17755cad7f5d1d1ff3a86b0fbafc69bf1f744a8406
-```
+## Steps
 
-`init` writes two key entries (seq 1 and 2): the stream key and the first session key.
+<Steps>
 
-## 2. Record the approval
+1. **Create the stream, then record the approval, the intent and the outcome.**
 
-An `approval` entry needs a `principal` (the approver) and an `action` (what is approved).
-`tenbri append` reads the draft on stdin and prints the entry as stored.
+   An approval needs a `principal` (the approver) and an `action` (what is approved). The intent
+   cites it as `{"by": <approver>, "entry": <entry hash>}`, where the entry hash is SHA-256 of a
+   zero byte followed by the stored line (canonical JSON), as `sha256:<hex>`. The intent is
+   durable before the refund runs; the outcome closes it by `id`.
 
-```sh
-APPROVAL=$(tenbri append audit/support <<'EOF'
-{
-  "kind": "approval",
-  "principal": {"kind": "person", "id": "alice"},
-  "action": {"type": "issue_refund", "target": "stripe:charge/ch_3PqX"}
-}
-EOF
-)
-echo "$APPROVAL"
-```
+   <Tabs syncKey="lang">
+   <TabItem label="CLI">
 
-```text
-{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01M5CT6J7RFD5TKGBQN04AK0TD","kind":"approval","prev":"sha256:33268eea…","principal":{"id":"alice","kind":"person"},"seq":3,"sig":"ed25519:bead7761…","signer":"sess:2026-10-20:55bd420d39d5","stream":"tnb1:df45634fd5c68a9fc1062f17755cad7f","ts":"2026-10-20T14:07:15.704Z","v":1}
-```
+   ```sh
+   tenbri init audit/support
+   ```
 
-## 3. Compute the approval's entry hash
+   ```text
+   created stream tnb1:4282909ee7474c3eeeb243ba852f77da at audit/support
+   stream key fingerprint (pin it): sha256:4282909ee7474c3eeeb243ba852f77da5b1f10dc68e6a83c4b6b26ada3749123
+   keys: ./keys/tnb1-4282909ee7474c3eeeb243ba852f77da
+   verify with: tenbri verify audit/support --key sha256:4282909ee7474c3eeeb243ba852f77da5b1f10dc68e6a83c4b6b26ada3749123
+   ```
 
-An intent cites an approval as `{"by": <approver>, "entry": <entry hash>}`. The entry hash is
-SHA-256 of a zero byte followed by the stored line, as `sha256:<hex>`.
+   `init` writes two key entries (seq 1 and 2): the stream key and the first session key.
+   `tenbri append` reads a draft on stdin and prints the entry as stored.
 
-```sh
-APPROVAL_HASH="sha256:$(printf '\0%s' "$APPROVAL" | shasum -a 256 | cut -d' ' -f1)"
-echo "$APPROVAL_HASH"
-```
+   ```sh
+   APPROVAL=$(tenbri append audit/support <<'EOF'
+   {
+     "kind": "approval",
+     "principal": {"kind": "person", "id": "alice"},
+     "action": {"type": "issue_refund", "target": "stripe:charge/ch_3PqX"}
+   }
+   EOF
+   )
+   APPROVAL_HASH="sha256:$(printf '\0%s' "$APPROVAL" | shasum -a 256 | cut -d' ' -f1)"
+   POLICY_DIGEST="hmac-sha256:$(printf '%s' 'refunds under 100 EUR are automatic' \
+     | openssl dgst -sha256 -hmac "$TENBRI_DIGEST_KEY" -r | cut -d' ' -f1)"
 
-```text
-sha256:e2f1940e5a4fad38be3a14d56580327466c33799e14db1ef64961b3077c2fd00
-```
+   INTENT=$(tenbri append audit/support <<EOF
+   {
+     "kind": "decision",
+     "phase": "intent",
+     "source": "sdk",
+     "principal": {"kind": "agent", "id": "support-assistant"},
+     "action": {"type": "issue_refund", "target": "stripe:charge/ch_3PqX"},
+     "inputs": [{"ref": "policy:refund", "version": "14", "digest": "$POLICY_DIGEST"}],
+     "rule": {"ref": "rule:refund-under-100", "version": "3", "result": "allow"},
+     "approval": {"by": {"kind": "person", "id": "alice"}, "entry": "$APPROVAL_HASH"}
+   }
+   EOF
+   )
+   echo "$INTENT"
+   ```
 
-## 4. Record the intent
+   ```text
+   {"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"approval":{"by":{"id":"alice","kind":"person"},"entry":"sha256:2cd7ac6d…"},"id":"01M5CWDKWVDZDN2HEZRAJZAF96","inputs":[{"digest":"hmac-sha256:100d69e9…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent","prev":"sha256:2cd7ac6d…","principal":{"id":"support-assistant","kind":"agent"},"rule":{"ref":"rule:refund-under-100","result":"allow","version":"3"},"seq":4,"sig":"ed25519:a8b663a6…","signer":"sess:2026-10-20:63214e562e83","source":"sdk","stream":"tnb1:4282909ee7474c3eeeb243ba852f77da","ts":"2026-10-20T14:46:03.931Z","v":1}
+   ```
 
-The intent is written, and durable, before the refund runs. It carries the policy it read, the rule
-that allowed it, and the approval.
+   Run the refund, then record the outcome:
 
-```sh
-INTENT=$(tenbri append audit/support <<EOF
-{
-  "kind": "decision",
-  "phase": "intent",
-  "source": "sdk",
-  "principal": {"kind": "agent", "id": "support-assistant"},
-  "action": {"type": "issue_refund", "target": "stripe:charge/ch_3PqX"},
-  "inputs": [{"ref": "policy:refund", "version": "14", "digest": "hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa"}],
-  "rule": {"ref": "rule:refund-under-100", "version": "3", "result": "allow"},
-  "approval": {"by": {"kind": "person", "id": "alice"}, "entry": "$APPROVAL_HASH"}
-}
-EOF
-)
-echo "$INTENT"
-```
+   ```sh
+   INTENT_ID=$(echo "$INTENT" | jq -r .id)
+   tenbri append audit/support <<EOF
+   {
+     "kind": "decision",
+     "phase": "outcome",
+     "source": "sdk",
+     "intent": "$INTENT_ID",
+     "status": "ok",
+     "principal": {"kind": "agent", "id": "support-assistant"},
+     "action": {"type": "issue_refund", "target": "stripe:charge/ch_3PqX"}
+   }
+   EOF
+   ```
 
-```text
-{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"approval":{"by":{"id":"alice","kind":"person"},"entry":"sha256:e2f1940e5a4fad38be3a14d56580327466c33799e14db1ef64961b3077c2fd00"},"id":"01M5CT6JA9PHWK2Y0BSFBN98M2","inputs":[{"digest":"hmac-sha256:9f2c41aa…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent","prev":"sha256:e2f1940e5a4fad38be3a14d56580327466c33799e14db1ef64961b3077c2fd00","principal":{"id":"support-assistant","kind":"agent"},"rule":{"ref":"rule:refund-under-100","result":"allow","version":"3"},"seq":4,"sig":"ed25519:504a0994…","signer":"sess:2026-10-20:55bd420d39d5","source":"sdk","stream":"tnb1:df45634fd5c68a9fc1062f17755cad7f","ts":"2026-10-20T14:07:15.785Z","v":1}
-```
+   ```text
+   {"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01M5CWDKXS5350P7C6Z68AH64F","intent":"01M5CWDKWVDZDN2HEZRAJZAF96","kind":"decision","phase":"outcome","prev":"sha256:ace27fa3…","principal":{"id":"support-assistant","kind":"agent"},"seq":5,"sig":"ed25519:9f617ebc…","signer":"sess:2026-10-20:63214e562e83","source":"sdk","status":"ok","stream":"tnb1:4282909ee7474c3eeeb243ba852f77da","ts":"2026-10-20T14:46:03.961Z","v":1}
+   ```
 
-The intent's `prev` equals `APPROVAL_HASH`: the approval is the entry just before it, so the hash
-you computed is the one the chain uses. An `approval.entry` that does not name an earlier approval
-entry is refused with `bad_approval`.
+   </TabItem>
+   <TabItem label="Python">
 
-## 5. Record the outcome
+   `Tenbri.open(..., create=True)` creates the stream and its keys when there is none.
+   `run.read` pins what the agent read to its next decision, with the keyed digest of the content.
+   `run.decision` writes the intent before the block runs and the outcome when it exits: `ok`,
+   `refused` if the block raises `Refused`, `error` for any other exception.
 
-After the refund call returns, close the intent by its `id`.
+   ```python title="refund.py"
+   import hashlib
+   import json
+   import os
 
-```sh
-INTENT_ID=$(echo "$INTENT" | jq -r .id)
-tenbri append audit/support <<EOF
-{
-  "kind": "decision",
-  "phase": "outcome",
-  "source": "sdk",
-  "intent": "$INTENT_ID",
-  "status": "ok",
-  "principal": {"kind": "agent", "id": "support-assistant"},
-  "action": {"type": "issue_refund", "target": "stripe:charge/ch_3PqX"}
-}
-EOF
-```
+   from tenbri import Tenbri
 
-```text
-{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01M5CT6JB9SG7TH3PEJF1SSQ1Z","intent":"01M5CT6JA9PHWK2Y0BSFBN98M2","kind":"decision","phase":"outcome","prev":"sha256:bac1cfa2…","principal":{"id":"support-assistant","kind":"agent"},"seq":5,"sig":"ed25519:6707bcb8…","signer":"sess:2026-10-20:55bd420d39d5","source":"sdk","status":"ok","stream":"tnb1:df45634fd5c68a9fc1062f17755cad7f","ts":"2026-10-20T14:07:15.817Z","v":1}
-```
+   ACTION = "issue_refund"
+   TARGET = "stripe:charge/ch_3PqX"
 
-## 6. Read the entries back
 
-`tail` prints the last entries as stored. `--no-follow` exits instead of waiting for new ones.
+   def entry_hash(entry: dict) -> str:
+       """SHA-256 of a zero byte and the stored line (canonical JSON), as sha256:<hex>."""
+       line = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+       return "sha256:" + hashlib.sha256(b"\0" + line.encode()).hexdigest()
 
-```sh
-tenbri tail audit/support -n 3 --no-follow
-```
 
-```text
-{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01M5CT6J7RFD5TKGBQN04AK0TD","kind":"approval",…,"seq":3,…}
-{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"approval":{"by":{"id":"alice","kind":"person"},"entry":"sha256:e2f1940e…"},"id":"01M5CT6JA9PHWK2Y0BSFBN98M2",…,"phase":"intent",…,"seq":4,…}
-{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01M5CT6JB9SG7TH3PEJF1SSQ1Z","intent":"01M5CT6JA9PHWK2Y0BSFBN98M2",…,"phase":"outcome",…,"seq":5,…,"status":"ok",…}
-```
+   def issue_refund(target: str) -> None:
+       print("refunding", target)  # call your payment provider here
 
-`query` filters by action or input and wraps each entry with its verification status. With
-`--key`, the stream is checked against the pinned fingerprint first.
 
-```sh
-tenbri query audit/support --action issue_refund \
-  --key sha256:df45634fd5c68a9fc1062f17755cad7f5d1d1ff3a86b0fbafc69bf1f744a8406 \
-  | jq -c '{verification, seq: .entry.seq, kind: .entry.kind, phase: .entry.phase, status: .entry.status, approval: .entry.approval.by.id}'
-```
+   log = Tenbri.open(
+       "./audit/support",
+       create=True,
+       digest_key=os.environ["TENBRI_DIGEST_KEY"].encode(),
+   )
+   print("pin this:", log.fingerprint)
 
-```text
-{"verification":"verified","seq":3,"kind":"approval","phase":null,"status":null,"approval":null}
-{"verification":"verified","seq":4,"kind":"decision","phase":"intent","status":null,"approval":"alice"}
-{"verification":"verified","seq":5,"kind":"decision","phase":"outcome","status":"ok","approval":null}
-```
+   # 1. Alice approves the refund.
+   approval = log.append(
+       {
+           "kind": "approval",
+           "principal": "person:alice",
+           "action": {"type": ACTION, "target": TARGET},
+       }
+   )
+   print("approval", approval["seq"], entry_hash(approval))
 
-## 7. Verify
+   # 2. The agent reads the policy, then decides. The intent is durable before the block runs,
+   #    and the outcome (ok, refused or error) is written when it exits.
+   with log.run("agent:support-assistant") as run:
+       run.read("policy:refund", "14", "refunds under 100 EUR are automatic")
+       with run.decision(
+           ACTION,
+           TARGET,
+           rule={"ref": "rule:refund-under-100", "version": "3", "result": "allow"},
+           approval={"by": approval["principal"], "entry": entry_hash(approval)},
+       ) as d:
+           issue_refund(TARGET)
 
-```sh
-tenbri verify audit/support --key sha256:df45634fd5c68a9fc1062f17755cad7f5d1d1ff3a86b0fbafc69bf1f744a8406
-```
+   print("intent", d.intent["seq"], d.intent["id"])
+   print("outcome", d.outcome["seq"], d.outcome["status"])
+   log.close()
+   ```
 
-```text
-verified 5 entries, stream tnb1:df45634fd5c68a9fc1062f17755cad7f, pinned to sha256:df45634fd5c68a9fc1062f17755cad7f5d1d1ff3a86b0fbafc69bf1f744a8406
-```
+   ```sh
+   python refund.py
+   ```
+
+   ```text
+   pin this: sha256:880e1b8e200041f24082c70119104c2ccb4943e5f4fbaf4ea4acac31bfdf5b5d
+   approval 3 sha256:58548abce620767b44083ed7a378001e3f97f388386113869c8f0377dc63db98
+   refunding stripe:charge/ch_3PqX
+   intent 4 01M5CWGXGXV3CAA8N0PBQC5H6A
+   outcome 5 ok
+   ```
+
+   </TabItem>
+   <TabItem label="TypeScript">
+
+   `Tenbri.open(..., { create: true })` creates the stream and its keys when there is none.
+   `run.read` pins what the agent read to its next decision, with the keyed digest of the content.
+   `run.decision` writes the intent before the callback runs and the outcome when it settles: `ok`,
+   `refused` if it throws `Refused`, `error` for anything else it throws.
+
+   ```ts title="refund.ts"
+   import { createHash } from 'node:crypto'
+   import { Tenbri, type Entry } from 'tenbri'
+
+   const action = 'issue_refund'
+   const target = 'stripe:charge/ch_3PqX'
+
+   // SHA-256 of a zero byte and the stored line (canonical JSON), as sha256:<hex>.
+   function canonical(v: unknown): string {
+     if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`
+     if (v !== null && typeof v === 'object') {
+       const keys = Object.keys(v).sort()
+       return `{${keys.map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(',')}}`
+     }
+     return JSON.stringify(v)
+   }
+   function entryHash(entry: Entry): string {
+     return 'sha256:' + createHash('sha256').update('\0' + canonical(entry)).digest('hex')
+   }
+
+   async function issueRefund(target: string): Promise<void> {
+     console.log('refunding', target) // call your payment provider here
+   }
+
+   const log = await Tenbri.open('./audit/support', {
+     create: true,
+     digestKey: process.env.TENBRI_DIGEST_KEY!,
+   })
+   console.log('pin this:', log.fingerprint)
+
+   // 1. Alice approves the refund.
+   const approval = await log.append({
+     kind: 'approval',
+     principal: 'person:alice',
+     action: { type: action, target },
+   })
+   console.log('approval', approval.seq, entryHash(approval))
+
+   // 2. The agent reads the policy, then decides. The intent is durable before the callback runs,
+   //    and the outcome (ok, refused or error) is written when it returns or throws.
+   await log.run({ principal: 'agent:support-assistant' }, async (run) => {
+     run.read('policy:refund', { version: '14', content: 'refunds under 100 EUR are automatic' })
+     await run.decision(
+       {
+         action,
+         target,
+         rule: { ref: 'rule:refund-under-100', version: '3', result: 'allow' },
+         approval: { by: approval.principal, entry: entryHash(approval) },
+       },
+       async (intent) => {
+         console.log('intent', intent.seq, intent.id)
+         await issueRefund(target)
+       },
+     )
+   })
+   await log.close()
+   ```
+
+   ```sh
+   node refund.ts
+   ```
+
+   ```text
+   pin this: sha256:f473143f58376df588970d1c67e14f182abfe1f647a20ca3216004b3e3e036d2
+   approval 3 sha256:14f6ff18cedbc2c36afea4455e56591c5cd1e63c86c7ad00f732bd903c8f5554
+   intent 4 01M5CWHFDQ010Y6RTHHXFG0TNK
+   refunding stripe:charge/ch_3PqX
+   ```
+
+   </TabItem>
+   <TabItem label="REST">
+
+   `tenbrid` stamps each entry with the principal of the token that wrote it, so Alice and the
+   agent each get a token. Create the stream and two tokens:
+
+   ```sh
+   tenbri init audit/support
+   tenbrid token   # the agent's
+   tenbrid token   # Alice's
+   ```
+
+   ```text
+   created stream tnb1:72fd273c29ebab40a1a41b462fd93a48 at audit/support
+   stream key fingerprint (pin it): sha256:72fd273c29ebab40a1a41b462fd93a48ccf0433701074b1166efa6d370bdd7b1
+   keys: ./keys/tnb1-72fd273c29ebab40a1a41b462fd93a48
+   verify with: tenbri verify audit/support --key sha256:72fd273c29ebab40a1a41b462fd93a48ccf0433701074b1166efa6d370bdd7b1
+   token (give it to the client; it is not stored): tnbt_1245d7ba…
+
+   [[tokens]]
+   sha256 = "sha256:96c1591b903835f5ab4797d30e69d9f2ba68f76341a0fcc199922a702eb81abc"
+   principal = { kind = "agent", id = "..." }
+   token (give it to the client; it is not stored): tnbt_486b9257…
+
+   [[tokens]]
+   sha256 = "sha256:556744cb6a66b70224c577e0cc21723af187a59fb3f0cce19f1b507141731612"
+   principal = { kind = "agent", id = "..." }
+   ```
+
+   ```toml title="tenbrid.toml"
+   keys = "keys"
+
+   [streams.support]
+   path = "audit/support"
+   key = "sha256:72fd273c29ebab40a1a41b462fd93a48ccf0433701074b1166efa6d370bdd7b1"
+
+   [[tokens]]   # the agent
+   sha256 = "sha256:96c1591b903835f5ab4797d30e69d9f2ba68f76341a0fcc199922a702eb81abc"
+   principal = { kind = "agent", id = "support-assistant" }
+
+   [[tokens]]   # Alice, who approves
+   sha256 = "sha256:556744cb6a66b70224c577e0cc21723af187a59fb3f0cce19f1b507141731612"
+   principal = { kind = "person", id = "alice" }
+   ```
+
+   ```sh
+   tenbrid --config tenbrid.toml
+   ```
+
+   ```text
+   tenbrid 0.1.0-beta.1: REST on http://127.0.0.1:7070, gRPC on 127.0.0.1:7071, 1 streams
+   ```
+
+   In another terminal (with `TENBRI_DIGEST_KEY` set), Alice approves. Every write carries an
+   `Idempotency-Key`: the entry id, a ULID your client generates.
+
+   ```sh
+   export TENBRI_URL=http://127.0.0.1:7070
+   export AGENT_TOKEN=tnbt_1245d7ba…   # the first token
+   export ALICE_TOKEN=tnbt_486b9257…   # the second token
+
+   curl -s -X POST $TENBRI_URL/v1/streams/support/approvals \
+     -H "Authorization: Bearer $ALICE_TOKEN" \
+     -H "Idempotency-Key: 01K80A1B2C3D4E5F6G7H8J9K0M" \
+     -H "Content-Type: application/json" \
+     -d '{"action":{"type":"issue_refund","target":"stripe:charge/ch_3PqX"}}'
+   ```
+
+   ```text
+   {"entry":{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01K80A1B2C3D4E5F6G7H8J9K0M","kind":"approval","prev":"sha256:3185c1ee…","principal":{"id":"alice","kind":"person"},"seq":3,"sig":"ed25519:ec1d90f3…","signer":"sess:2026-10-20:f65f44f09615","stream":"tnb1:72fd273c29ebab40a1a41b462fd93a48","ts":"2026-10-20T14:48:39.546Z","v":1},"replayed":false}
+   ```
+
+   `GET /entries/{id}` returns an entry with its entry hash, so the agent does not compute it.
+   The agent records the intent, runs the refund, then records the outcome:
+
+   ```sh
+   APPROVAL_HASH=$(curl -s $TENBRI_URL/v1/streams/support/entries/01K80A1B2C3D4E5F6G7H8J9K0M \
+     -H "Authorization: Bearer $AGENT_TOKEN" | jq -r .hash)
+   POLICY_DIGEST="hmac-sha256:$(printf '%s' 'refunds under 100 EUR are automatic' \
+     | openssl dgst -sha256 -hmac "$TENBRI_DIGEST_KEY" -r | cut -d' ' -f1)"
+
+   curl -s -X POST $TENBRI_URL/v1/streams/support/intents \
+     -H "Authorization: Bearer $AGENT_TOKEN" \
+     -H "Idempotency-Key: 01K80A1C5N6P7Q8R9S0T1V2W3X" \
+     -H "Content-Type: application/json" \
+     -d @- <<EOF
+   {
+     "action": {"type": "issue_refund", "target": "stripe:charge/ch_3PqX"},
+     "inputs": [{"ref": "policy:refund", "version": "14", "digest": "$POLICY_DIGEST"}],
+     "rule": {"ref": "rule:refund-under-100", "version": "3", "result": "allow"},
+     "approval": {"by": {"kind": "person", "id": "alice"}, "entry": "$APPROVAL_HASH"}
+   }
+   EOF
+
+   curl -s -X POST $TENBRI_URL/v1/streams/support/outcomes \
+     -H "Authorization: Bearer $AGENT_TOKEN" \
+     -H "Idempotency-Key: 01K80A1D8Y9Z0A1B2C3D4E5F6G" \
+     -H "Content-Type: application/json" \
+     -d '{"intent": "01K80A1C5N6P7Q8R9S0T1V2W3X", "status": "ok"}'
+   ```
+
+   ```text
+   {"entry":{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"approval":{"by":{"id":"alice","kind":"person"},"entry":"sha256:260375ca…"},"durability":"local","id":"01K80A1C5N6P7Q8R9S0T1V2W3X","inputs":[{"digest":"hmac-sha256:100d69e9…","ref":"policy:refund","version":"14"}],"kind":"decision","phase":"intent","prev":"sha256:260375ca…","principal":{"id":"support-assistant","kind":"agent"},"rule":{"ref":"rule:refund-under-100","result":"allow","version":"3"},"seq":4,"sig":"ed25519:d68dc2a5…","signer":"sess:2026-10-20:f65f44f09615","source":"sdk","stream":"tnb1:72fd273c29ebab40a1a41b462fd93a48","ts":"2026-10-20T14:48:48.455Z","v":1},"replayed":false}
+   {"entry":{"action":{"target":"stripe:charge/ch_3PqX","type":"issue_refund"},"id":"01K80A1D8Y9Z0A1B2C3D4E5F6G","intent":"01K80A1C5N6P7Q8R9S0T1V2W3X","kind":"decision","phase":"outcome","prev":"sha256:97e16924…","principal":{"id":"support-assistant","kind":"agent"},"seq":5,"sig":"ed25519:9fa15665…","signer":"sess:2026-10-20:f65f44f09615","source":"sdk","status":"ok","stream":"tnb1:72fd273c29ebab40a1a41b462fd93a48","ts":"2026-10-20T14:48:48.489Z","v":1},"replayed":false}
+   ```
+
+   The outcome needs only `intent` and `status`: `principal` and `action` default to the
+   intent's.
+
+   </TabItem>
+   </Tabs>
+
+   In every tab, the intent's `prev` equals the approval's entry hash: the approval is the entry
+   just before it, so the hash you computed is the one the chain uses. An `approval.entry` that
+   does not name an earlier approval entry is refused with `bad_approval`.
+
+2. **Read the entries back and verify.**
+
+   Pin the fingerprint the stream printed when you created it. Reads then check the stream
+   against it, and each match carries its verification status.
+
+   <Tabs syncKey="lang">
+   <TabItem label="CLI">
+
+   `--verify` checks the answers against the stream itself, even when a query index exists.
+
+   ```sh
+   PIN=sha256:4282909ee7474c3eeeb243ba852f77da5b1f10dc68e6a83c4b6b26ada3749123
+   tenbri query audit/support --action issue_refund --key $PIN --verify \
+     | jq -c '{verification, seq, kind: .entry.kind, phase: .entry.phase, status: .entry.status, approved_by: .entry.approval.by.id}'
+   tenbri verify audit/support --key $PIN
+   ```
+
+   ```text
+   {"verification":"verified","seq":3,"kind":"approval","phase":null,"status":null,"approved_by":null}
+   {"verification":"verified","seq":4,"kind":"decision","phase":"intent","status":null,"approved_by":"alice"}
+   {"verification":"verified","seq":5,"kind":"decision","phase":"outcome","status":"ok","approved_by":null}
+   verified 5 entries, stream tnb1:4282909ee7474c3eeeb243ba852f77da, pinned to sha256:4282909ee7474c3eeeb243ba852f77da5b1f10dc68e6a83c4b6b26ada3749123
+   ```
+
+   `tenbri tail audit/support -n 3 --no-follow` prints the same entries as stored.
+
+   </TabItem>
+   <TabItem label="Python">
+
+   ```python title="check.py"
+   import os
+
+   from tenbri import Tenbri
+
+   with Tenbri.open("./audit/support", key=os.environ["PIN"]) as log:
+       for m in log.query(action="issue_refund"):
+           e = m.entry
+           print(m.verification, e["seq"], e["kind"], e.get("phase", "-"), e.get("status", "-"))
+
+       report = log.verify()
+       print("ok:", report.ok, "entries:", report.entries, "pinned to:", report.pinned_key)
+   ```
+
+   ```sh
+   PIN=sha256:880e1b8e200041f24082c70119104c2ccb4943e5f4fbaf4ea4acac31bfdf5b5d python check.py
+   ```
+
+   ```text
+   verified 3 approval - -
+   verified 4 decision intent -
+   verified 5 decision outcome ok
+   ok: True entries: 5 pinned to: sha256:880e1b8e200041f24082c70119104c2ccb4943e5f4fbaf4ea4acac31bfdf5b5d
+   ```
+
+   </TabItem>
+   <TabItem label="TypeScript">
+
+   ```ts title="check.ts"
+   import { Tenbri } from 'tenbri'
+
+   const log = await Tenbri.open('./audit/support', { key: process.env.PIN! })
+   for (const { verification, entry: e } of await log.query({ action: 'issue_refund' })) {
+     console.log(verification, e.seq, e.kind, e.phase ?? '-', e.status ?? '-')
+   }
+   const report = await log.verify()
+   console.log('ok:', report.ok, 'entries:', report.entries, 'pinned to:', report.pinnedKey)
+   await log.close()
+   ```
+
+   ```sh
+   PIN=sha256:f473143f58376df588970d1c67e14f182abfe1f647a20ca3216004b3e3e036d2 node check.ts
+   ```
+
+   ```text
+   verified 3 approval - -
+   verified 4 decision intent -
+   verified 5 decision outcome ok
+   ok: true entries: 5 pinned to: sha256:f473143f58376df588970d1c67e14f182abfe1f647a20ca3216004b3e3e036d2
+   ```
+
+   </TabItem>
+   <TabItem label="REST">
+
+   `tenbrid` checks the stream against the `key` pinned in `tenbrid.toml`. `/verify` reads the
+   whole stream from storage again; compare its `pinned_key` with the fingerprint you hold.
+
+   ```sh
+   curl -s "$TENBRI_URL/v1/streams/support/entries?action=issue_refund" \
+     -H "Authorization: Bearer $AGENT_TOKEN" \
+     | jq -c '.entries[] | {verification, seq, kind: .entry.kind, phase: .entry.phase, status: .entry.status, approved_by: .entry.approval.by.id}'
+   curl -s $TENBRI_URL/v1/streams/support/verify -H "Authorization: Bearer $AGENT_TOKEN"
+   ```
+
+   ```text
+   {"verification":"verified","seq":3,"kind":"approval","phase":null,"status":null,"approved_by":null}
+   {"verification":"verified","seq":4,"kind":"decision","phase":"intent","status":null,"approved_by":"alice"}
+   {"verification":"verified","seq":5,"kind":"decision","phase":"outcome","status":"ok","approved_by":null}
+   {"stream":"tnb1:72fd273c29ebab40a1a41b462fd93a48","entries":5,"pinned_key":"sha256:72fd273c29ebab40a1a41b462fd93a48ccf0433701074b1166efa6d370bdd7b1"}
+   ```
+
+   </TabItem>
+   </Tabs>
+
+</Steps>
+
+<Aside type="tip">
+All four ways write the same format to the same kind of stream. A stream written from Python
+verifies with `tenbri verify`, and the reverse.
+</Aside>
 
 ## What happened
 
 You wrote three signed entries that chain to each other. The intent cites the approval by its
-entry hash, so the approval cannot be swapped or edited without breaking verification. The outcome
-names its intent by `id`, which closes it: an intent without an outcome is reconciled with
-`status: unknown` by a later writer after an hour.
+entry hash and pins the policy version and rule it relied on, so none of them can be swapped or
+edited without breaking verification. The outcome names its intent by `id`, which closes it: an
+intent without an outcome is reconciled with `status: unknown` by a later writer after an hour.
 
-Related: [Streams and entries](/docs/concepts/streams-and-entries/) ·
-[Integrity](/docs/concepts/integrity/) · [Entry format](/docs/reference/entry-format/) ·
-[CLI reference](/docs/reference/cli/)
+## Related
+
+- [Streams and entries](/docs/concepts/streams-and-entries/)
+- [Integrity](/docs/concepts/integrity/)
+- [Entry format](/docs/reference/entry-format/)
+- [CLI reference](/docs/reference/cli/)
+- [API reference](/docs/reference/api/)
+- [Adapters](/docs/adapters/): record decisions from an agent framework without writing them by hand.

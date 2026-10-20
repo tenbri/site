@@ -14,7 +14,7 @@ It works on its own, with any agent framework, from Rust, Python, Node, the brow
 `tenbri` CLI or the `tenbrid` REST and gRPC API.
 
 :::caution[Pre-release]
-Tenbri is in `0.1.0-alpha`. Nothing is ready for production yet, and the format is provisional
+Tenbri is in `0.1.0-beta.1`. Nothing is ready for production yet, and the format is provisional
 until its external review ends. See the
 [roadmap](https://github.com/tenbri/tenbri#status).
 :::

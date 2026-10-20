@@ -61,10 +61,12 @@ keys = "/var/lib/tenbri/keys"    # TENBRI_KEYS; default ~/.config/tenbri/keys
 schema = "tenbri.toml"           # action schemas; TENBRI_SCHEMA; none: nothing is checked
 queue = 10000                    # appends waiting per stream (a batch counts once); TENBRI_QUEUE
 deadline_ms = 2000               # how long an append waits for the queue; TENBRI_DEADLINE_MS
+index_dir = "/var/cache/tenbri/index"  # query indexes, one directory per stream; TENBRI_INDEX_DIR
 
 [streams.support]                # the stream's name in URLs (its tnb1: id works too)
 path = "/var/lib/tenbri/audit/support"  # or s3://bucket/prefix, r2://bucket/prefix
 key = "sha256:..."               # pin; default: the stream key held in `keys`
+index = "sqlite"                 # the query index: sqlite (default) or parquet
 
 [anchor]                         # optional: RFC 3161 timestamps of checkpoints
 tsa = "https://tsa.example/"     # the timestamp authority's URL
@@ -84,8 +86,10 @@ streams = ["support"]            # default: every stream
 | `schema` | path | none (nothing is checked) | `TENBRI_SCHEMA` |
 | `queue` | integer | `10000` | `TENBRI_QUEUE` |
 | `deadline_ms` | integer | `2000` | `TENBRI_DEADLINE_MS` |
+| `index_dir` | path | the user's cache directory (`tenbri/index` in it) | `TENBRI_INDEX_DIR` |
 | `streams.<name>.path` | string | required | |
 | `streams.<name>.key` | string (`sha256:...` or `ed25519:...`) | the stream key held in `keys` | |
+| `streams.<name>.index` | `"sqlite"` or `"parquet"` | `"sqlite"` | |
 | `anchor.tsa` | URL | required in `[anchor]` | |
 | `anchor.every_s` | integer, at least 1 | `3600` | |
 | `tokens[].sha256` | `sha256:<64 hex>` | required | |
@@ -98,6 +102,10 @@ streams = ["support"]            # default: every stream
 - `queue` must be at least 1. A token naming a stream that is not configured is an error.
 - Object stores take credentials from `AWS_*` (and `CLOUDFLARE_ACCOUNT_ID` for R2), as `tenbri`
   does. See [Storage](/docs/reference/storage/).
+- Queries go through each stream's index, kept under `index_dir` as `tenbri index rebuild` keeps it
+  ([CLI](/docs/reference/cli/#index-rebuild)). The index is derived and safe to delete. With no
+  `index_dir`, no `TENBRI_INDEX_DIR` and no cache directory, `tenbrid` fails to start with
+  `no index directory: set index_dir or TENBRI_INDEX_DIR`.
 - With `[anchor]`, the latest checkpoint of every stream is timestamped every `every_s` seconds if
   it has no token yet; the token is stored at `anchors/<size>.tsr` and receipts carry it.
 
@@ -126,7 +134,7 @@ with `TENBRI_FORBIDDEN`. A token with `streams` may only use those streams.
 | `POST` | `/v1/streams/{stream}/outcomes` | Append the outcome of an intent | 201 or 200 `AppendedBody` |
 | `POST` | `/v1/streams/{stream}/approvals` | Append an approval | 201 or 200 `AppendedBody` |
 | `POST` | `/v1/streams/{stream}/entries` | Append up to 1000 entries in order | 200 `BatchBody` |
-| `GET` | `/v1/streams/{stream}/entries` | Entries matching every filter given, in sequence order | 200 `QueryBody` |
+| `GET` | `/v1/streams/{stream}/entries` | Entries matching every filter given, in sequence order, through the stream's index | 200 `QueryBody` |
 | `GET` | `/v1/streams/{stream}/entries/{id}` | One entry by id | 200 `QueriedBody` |
 | `GET` | `/v1/streams/{stream}/entries/{id}/receipt` | A receipt for one entry, canonical JSON. If no checkpoint covers the entry yet, `tenbrid` seals one first. | 200 |
 | `GET` | `/v1/streams/{stream}/tail` | Server-sent events: entries after a sequence number, then new ones | 200 `text/event-stream` |
@@ -161,8 +169,9 @@ Drafts are JSON objects in the shape of an entry, without the members the writer
 | --- | --- |
 | `AppendedBody` | `{entry, replayed, warnings?}`: the entry as stored (canonical JSON), whether it was replayed, schema warnings |
 | `BatchBody` | `{entries: [AppendedBody, ...]}` in request order |
-| `QueriedBody` | `{verification, entry}`, `verification` is `verified` or `broken` |
-| `QueryBody` | `{entries: [QueriedBody, ...], next_after_seq?}` |
+| `QueriedBody` | `{verification, entry, seq, hash}`: `verification` is `verified` or `broken`; `seq` and `hash` are the entry's sequence number and entry hash, to check against the chain, a checkpoint or a receipt |
+| `QueryBody` | `{entries: [QueriedBody, ...], next_after_seq?, as_of}` |
+| `AsOfBody` | `{stream, seq, hash, checkpoint?}`: what the index had read when it answered, and the size of the latest checkpoint at or below `seq`, if any |
 | `VerifyBody` | `{stream, entries, pinned_key, broken?}`, `broken` is `{seq, code, message}` and absent when the stream verifies |
 | `StatusBody` | `{status}`: `ok`, `ready` or `not_ready` |
 
@@ -173,16 +182,30 @@ Drafts are JSON objects in the shape of an entry, without the members the writer
 
 | Parameter | Type | Meaning |
 | --- | --- | --- |
-| `input` | string, repeatable | An input the entry used, as `ref@version` (`policy:refund@14`); repeat to require several |
+| `input` | string, repeatable | An input the entry used, as `ref@version` (`policy:refund@14`), or `ref` for any version; repeat to require several |
 | `action` | string | The action type (`reply_ticket`) |
 | `principal` | string | `kind:id` (`agent:support-assistant`) |
 | `target` | string | The action target, exactly |
 | `subject` | string | The subject handle |
+| `rule` | string | The rule, as `ref@version`, or `ref` for any version |
+| `since` | string | Entries at or after this time: `2026-10-20T09:00:00.000Z`, `2026-10-20T09:00:00Z`, `2026-10-20`, or a duration ago (`90s`, `15m`, `1h`, `7d`); compared with `ts`, the writer's claimed time. Anything else: `TENBRI_INVALID_REQUEST` (`since=<value>: not a time`). |
+| `until` | string | Entries before this time, in the same forms |
+| `trace_id` | string | The OpenTelemetry trace id (32 hex digits) |
+| `status` | string | An outcome's status: `ok`, `error`, `refused` or `unknown` |
 | `after_seq` | integer | Only entries with a greater sequence number |
 | `limit` | integer | At most this many entries: default 100, at most 1000 |
 
 When more entries match, the response carries `next_after_seq`: pass it as `after_seq` for the next
 page.
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:7070/v1/streams/support/entries?input=policy:refund&since=1h&limit=1"
+```
+
+```json
+{"entries":[{"verification":"verified","entry":{...},"seq":8,"hash":"sha256:0879ce1f…"}],"as_of":{"stream":"tnb1:dc736478ac6b04bad25e3a3a6f8d71aa","seq":8,"hash":"sha256:0879ce1f…","checkpoint":4}}
+```
 
 ### Tail
 
@@ -197,7 +220,7 @@ falls too far behind gets `TENBRI_TAIL_LAGGED`: reconnect with `after_seq`.
 | --- | --- | --- |
 | `Authorization: Bearer <token>` | request | Required on every endpoint but health and readiness |
 | `Idempotency-Key` | request | Required on `intents`, `outcomes` and `approvals`: the entry id, a ULID the client generates. The same key with the same draft returns the original entry (200, `replayed: true`); with another draft it fails with `TENBRI_IDEMPOTENCY_CONFLICT`. Batches carry each entry's `id` instead. |
-| `traceparent` | request | W3C Trace Context on appends: becomes the entry's `trace` (trace and span id) unless the draft has one |
+| `traceparent` | request | W3C Trace Context on appends: becomes the entry's `trace` (trace and span id) unless the draft has one; on a batch, the `trace` of every draft without one. An invalid header is ignored. |
 | `Last-Event-ID` | request | On `tail`: resume after this sequence number when `after_seq` is absent. Not a number: `TENBRI_INVALID_REQUEST`. |
 | `Retry-After` | response | On every 503, value `1` |
 
@@ -254,14 +277,16 @@ as JSON objects of the same shape, without the members the writer fills.
 | `AppendBatch` | `stream`, `drafts_json` (repeated) | repeated `Appended` | `POST .../entries` |
 | `GetEntry` | `stream`, `id` | `QueriedEntry` | `GET .../entries/{id}` |
 | `GetReceipt` | `stream`, `id` | `receipt` (bytes, canonical JSON) | `GET .../entries/{id}/receipt` |
-| `QueryEntries` | `stream`, `inputs`, `action`, `principal`, `target`, `subject`, `after_seq`, `limit` | repeated `QueriedEntry`, `next_after_seq` (0 when no more) | `GET .../entries` |
+| `QueryEntries` | `stream`, `inputs`, `action`, `principal`, `target`, `subject`, `after_seq`, `limit`, `rule`, `since`, `until`, `trace_id`, `status` | repeated `QueriedEntry`, `next_after_seq` (0 when no more), `as_of` | `GET .../entries` |
 | `TailEntries` | `stream`, `after_seq` | server stream of `QueriedEntry` | `GET .../tail` |
 | `VerifyStream` | `stream` | `stream_id`, `entries`, `pinned_key`, `broken` (`seq`, `code`, `message`) | `GET .../verify` |
 | `ListSchemas` | none | `schemas_json` | `GET /v1/schemas` |
 
 - `Appended` is `entry_json`, `replayed`, `warnings`.
-- `QueriedEntry` is `entry_json` and `verification`: `VERIFICATION_VERIFIED` (checked from the
-  pinned genesis key up to this entry) or `VERIFICATION_BROKEN` (at or after the first sequence
-  number that no longer verifies, such as a revocation reaching back).
+- `QueriedEntry` is `entry_json`, `verification`, `seq` and `hash`. `verification` is
+  `VERIFICATION_VERIFIED` (checked from the pinned genesis key up to this entry) or
+  `VERIFICATION_BROKEN` (at or after the first sequence number that no longer verifies, such as a
+  revocation reaching back).
+- `AsOf` is `stream_id`, `seq`, `hash` and `checkpoint` (0 when there is none).
 - `QueryEntries.limit`: 0 means 100, more than 1000 is 1000.
 - The proto is frozen per major version: fields are added, never changed.

@@ -9,7 +9,9 @@ const description =
 	'Open-source, tamper-evident record of what AI agents decided: hash-chained, signed and verifiable offline, on storage you control.';
 
 const installs = [
-	{ id: 'crates.io', cmd: 'cargo install tenbri-cli --version 0.1.0-alpha.2' },
+	{ id: 'cli', cmd: "cargo install tenbri-cli --version 0.1.0-beta.1 --locked" },
+	{ id: 'python', cmd: 'pip install --pre tenbri' },
+	{ id: 'node', cmd: 'npm install tenbri@next' },
 	{ id: 'source', cmd: 'cargo install --git https://github.com/tenbri/tenbri tenbri-cli' },
 ];
 
@@ -161,10 +163,10 @@ service tenbri.v1.TenbriService {
 	},
 	{
 		id: 'rust',
-		tab: 'Rust',
-		title: 'Embed the writer.',
-		body: 'Use tenbri-writer, tenbri-keys and tenbri-store from Rust today. The tenbri facade crate and the Python, Node and WASM bindings are reserved names; their code lands before v0.1.0.',
-		points: ['Async writer over any store', 'verify() returns a report you can act on', 'Python, Node and WASM verifier next'],
+		tab: 'SDKs',
+		title: 'Rust, Python, Node and your agent framework.',
+		body: 'Embed the writer in Rust with tenbri-writer, or use the Python and Node packages, and verify in the browser with the WASM verifier. Adapters for the Claude Agent SDK, the OpenAI Agents SDK, and LangGraph and LangChain record tool calls for you.',
+		points: ['pip install --pre tenbri · npm install tenbri@next', 'Adapters for the Claude Agent SDK, OpenAI Agents SDK and LangGraph', 'verify() returns a report you can act on'],
 		code: `let sk = Key::new_stream()?;
 let session = Key::new_session(now_ms(), SESSION_LIFETIME_MS)?;
 let mut w = Writer::create(store.clone(), &sk, session).await?;
@@ -179,12 +181,11 @@ let report = verify(&store, Some(&sk.fingerprint())).await?;`,
 ];
 
 const next = [
-	'Receipts an auditor verifies alone',
-	'Blob encryption and per-subject erasure',
-	'RFC 3161 timestamps',
-	'SQLite and Parquet index',
-	'Python, Node and WASM verifier',
-	'Claude Agent SDK, OpenAI Agents SDK, LangGraph adapters',
+	'Network targets on every action',
+	'Proxy-observed entries and alerts on undeclared actions',
+	'Silent-stream alerts in tenbrid',
+	'Checkpoint publishing to witnesses',
+	'PKCS#11 and cloud KMS keys',
 ];
 
 const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', 'SOC 2', 'ISO/IEC 27001', 'ISO/IEC 42001', 'NIST AI RMF'];
@@ -340,7 +341,7 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 				<div class="wrap closing-row">
 					<div>
 						<h2>Early, open, and built in public.</h2>
-						<p>0.1.0-alpha.2 is out. The format is provisional until its external review ends. Apache-2.0, written in Rust, no telemetry.</p>
+						<p>0.1.0-beta.1 is out. The format is provisional until its external review ends. Apache-2.0, written in Rust, no telemetry.</p>
 					</div>
 					<div class="ctas">
 						<a class="btn primary" href="https://github.com/tenbri/tenbri">Star on GitHub</a>

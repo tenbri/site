@@ -1,139 +1,540 @@
 ---
 title: Action schemas in CI
-description: Declare what an issue_refund entry must carry in tenbri.toml and check it on every pull request.
+description: Declare what an issue_refund entry must carry in tenbri.toml, check streams and your own code against it on every pull request, and enforce it at write time.
 sidebar:
   order: 4
 ---
 
+import { Aside, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
 An action schema says what an entry for one action type must carry: inputs, a rule, an approval,
 a target pattern, and any member by its dotted path. You will write a `tenbri.toml` for
-`issue_refund`, run `tenbri schema check` against a stream that passes and one that fails, and add
-a GitHub Actions job that checks the file on every pull request.
+`issue_refund`, check a stream against it with `tenbri schema check`, test that the entries your
+Python or TypeScript code writes pass it, have `tenbrid` refuse entries that break it, and run the
+checks on every pull request.
 
-**Prerequisites:** the `tenbri` CLI ([install](/docs/getting-started/install/)) and a stream with
-refund decisions, such as the one from [Record a refund](/docs/examples/record-a-refund/).
+## Prerequisites
 
-## 1. Write tenbri.toml
+- The `tenbri` CLI, which runs every check:
 
-```toml title="tenbri.toml"
-# Every action type must be declared here.
-unknown_actions = "reject"
+  ```sh
+  cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+  ```
 
-[actions.issue_refund]
-description = "Refund a card charge through Stripe."
-inputs = ["policy:refund"]
-rule = true
-approval = true
-target = "stripe:charge/*"
+- A stream with refund decisions, such as the one from [Record a refund](/docs/examples/record-a-refund/),
+  and `TENBRI_KEYS` set as there (`export TENBRI_KEYS=./keys`).
+- To test your own code, the binding for your language:
 
-[actions.issue_refund.fields."rule.result"]
-allowed = ["allow"]
-```
+<Tabs syncKey="lang">
+<TabItem label="CLI">
 
-The requirements apply to intents. Outcomes, approvals and other entries that name an action are
-only checked for a declared action type.
+Nothing more.
 
-## 2. Check a stream that passes
+</TabItem>
+<TabItem label="Python">
 
-`schema check` reads `tenbri.toml` from the current directory (or `--schema FILE`), then every
-entry of the streams you name.
+Python 3.10 or later and pytest.
+
+<Tabs syncKey="py-pkg">
+<TabItem label="pip">
 
 ```sh
-tenbri schema check audit/support; echo "exit $?"
+pip install --pre tenbri pytest
 ```
 
-```text
-tenbri.toml: 1 action schemas, unknown actions rejected
-audit/support: 5 entries, 0 break their schema
-exit 0
-```
-
-## 3. Check a stream that fails
-
-Append an intent with no rule and no approval, and one for an action the file does not declare:
+</TabItem>
+<TabItem label="uv">
 
 ```sh
-export TENBRI_KEYS=./keys
-tenbri append audit/support > /dev/null <<'EOF'
-{"kind":"decision","phase":"intent","source":"sdk",
- "principal":{"kind":"agent","id":"support-assistant"},
- "action":{"type":"issue_refund","target":"stripe:charge/ch_9Zk2"},
- "inputs":[{"ref":"policy:refund","version":"15","digest":"hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa"}]}
-EOF
-tenbri append audit/support > /dev/null <<'EOF'
-{"kind":"decision","phase":"intent","source":"sdk",
- "principal":{"kind":"agent","id":"support-assistant"},
- "action":{"type":"close_ticket","target":"zendesk:ticket/4821"}}
-EOF
-tenbri schema check audit/support; echo "exit $?"
+uv add --prerelease allow tenbri
+uv add --dev pytest
 ```
 
-```text
-tenbri.toml: 1 action schemas, unknown actions rejected
-audit/support seq 6: rule: required
-audit/support seq 6: approval: required
-audit/support seq 7: action.type: `close_ticket` is not declared in tenbri.toml
-audit/support: 7 entries, 2 break their schema
-exit 1
-```
-
-A typo in `tenbri.toml` is an error before any stream is read, with exit code 2. Here `rule` is
-misspelled `rul`:
-
-```text
-tenbri: tenbri.toml: TOML parse error at line 7, column 1
-  |
-7 | rul = true
-  | ^^^
-unknown field `rul`, expected one of `description`, `inputs`, `rule`, `approval`, `durability`, `target`, `fields`
-```
-
-With no stream given, `schema check` only validates the file:
+</TabItem>
+<TabItem label="poetry">
 
 ```sh
-tenbri schema check; echo "exit $?"
+poetry add --allow-prereleases tenbri
+poetry add --group dev pytest
 ```
 
-```text
-tenbri.toml: 1 action schemas, unknown actions rejected
-exit 0
+</TabItem>
+</Tabs>
+
+</TabItem>
+<TabItem label="TypeScript">
+
+Node 22.18 or later, which runs `.ts` files directly, in a project with `"type": "module"`
+(`npm pkg set type=module`).
+
+<Tabs syncKey="js-pkg">
+<TabItem label="npm">
+
+```sh
+npm install tenbri@next
 ```
 
-## 4. Check it on every pull request
+</TabItem>
+<TabItem label="pnpm">
 
-This job installs the published CLI and validates `tenbri.toml` whenever a pull request changes
-it. Add stream paths after `check` (a test fixture, or an `s3://` stream with credentials from
-secrets) to check entries too.
-
-```yaml title=".github/workflows/tenbri-schema.yml"
-name: tenbri schema
-
-on:
-  pull_request:
-    paths:
-      - tenbri.toml
-
-jobs:
-  schema:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install tenbri
-        run: cargo install tenbri-cli --version 0.1.0-alpha.2 --locked
-      - name: Check tenbri.toml
-        run: tenbri schema check --schema tenbri.toml
+```sh
+pnpm add tenbri@next
 ```
 
-The install and check steps were run locally against the published `0.1.0-alpha.2` crate; the
-workflow file itself was not run on GitHub.
+</TabItem>
+<TabItem label="yarn">
+
+```sh
+yarn add tenbri@next
+```
+
+</TabItem>
+<TabItem label="bun">
+
+```sh
+bun add tenbri@next
+```
+
+</TabItem>
+</Tabs>
+
+</TabItem>
+<TabItem label="REST">
+
+`curl` and `tenbrid`:
+
+```sh
+cargo install tenbri-server --version 0.1.0-beta.1 --locked
+```
+
+</TabItem>
+</Tabs>
+
+## Steps
+
+<Steps>
+
+1. **Write tenbri.toml.**
+
+   ```toml title="tenbri.toml"
+   # Every action type must be declared here.
+   unknown_actions = "reject"
+
+   [actions.issue_refund]
+   description = "Refund a card charge through Stripe."
+   inputs = ["policy:refund"]
+   rule = true
+   approval = true
+   target = "stripe:charge/*"
+
+   [actions.issue_refund.fields."rule.result"]
+   allowed = ["allow"]
+   ```
+
+   The requirements apply to intents. Outcomes, approvals and other entries that name an action
+   are only checked for a declared action type.
+
+2. **Check a stream.**
+
+   `schema check` reads `tenbri.toml` from the current directory (or `--schema FILE`), then every
+   entry of the streams you name: directories, or `s3://` and `r2://` URLs. It exits 0 when every
+   entry passes, 1 when one breaks its schema, and 2 when the file itself is invalid.
+
+   ```sh
+   tenbri schema check audit/support; echo "exit $?"
+   ```
+
+   ```text
+   tenbri.toml: 1 action schemas, unknown actions rejected
+   audit/support: 5 entries, 0 break their schema
+   exit 0
+   ```
+
+   Append an intent with no rule and no approval, and one for an action the file does not
+   declare, then check again:
+
+   ```sh
+   tenbri append audit/support > /dev/null <<'EOF'
+   {"kind":"decision","phase":"intent","source":"sdk",
+    "principal":{"kind":"agent","id":"support-assistant"},
+    "action":{"type":"issue_refund","target":"stripe:charge/ch_9Zk2"},
+    "inputs":[{"ref":"policy:refund","version":"15","digest":"hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa"}]}
+   EOF
+   tenbri append audit/support > /dev/null <<'EOF'
+   {"kind":"decision","phase":"intent","source":"sdk",
+    "principal":{"kind":"agent","id":"support-assistant"},
+    "action":{"type":"close_ticket","target":"zendesk:ticket/4821"}}
+   EOF
+   tenbri schema check audit/support; echo "exit $?"
+   ```
+
+   ```text
+   tenbri.toml: 1 action schemas, unknown actions rejected
+   audit/support seq 6: rule: required
+   audit/support seq 6: approval: required
+   audit/support seq 7: action.type: `close_ticket` is not declared in tenbri.toml
+   audit/support: 7 entries, 2 break their schema
+   exit 1
+   ```
+
+   A typo in `tenbri.toml` fails before any stream is read. Here `rule` is misspelled `rul`:
+
+   ```text
+   tenbri: tenbri.toml: TOML parse error at line 7, column 1
+     |
+   7 | rul = true
+     | ^^^
+   unknown field `rul`, expected one of `description`, `inputs`, `rule`, `approval`, `durability`, `target`, `fields`
+   ```
+
+   With no stream given, `schema check` only validates the file:
+
+   ```sh
+   tenbri schema check; echo "exit $?"
+   ```
+
+   ```text
+   tenbri.toml: 1 action schemas, unknown actions rejected
+   exit 0
+   ```
+
+3. **Test the entries your code writes.**
+
+   A production stream only shows a broken entry after it was written. A test catches it first:
+   run the code that records a refund against a throwaway stream, then check that stream.
+
+   <Tabs syncKey="lang">
+   <TabItem label="CLI">
+
+   If your agent writes with `tenbri append` or `tenbrid`, point it at a fixture stream in your
+   test suite and run `tenbri schema check <fixture>` afterwards, as in step 2.
+
+   </TabItem>
+   <TabItem label="Python">
+
+   Replace `record_refund` with a call into your own code.
+
+   ```python title="test_audit_schema.py"
+   import hashlib
+   import json
+   import subprocess
+
+   from tenbri import Tenbri
+
+
+   def entry_hash(entry: dict) -> str:
+       line = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+       return "sha256:" + hashlib.sha256(b"\0" + line.encode()).hexdigest()
+
+
+   def record_refund(log: Tenbri, charge: str) -> None:
+       """What the agent writes for a refund: replace with a call into your own code."""
+       target = f"stripe:charge/{charge}"
+       approval = log.append(
+           {"kind": "approval", "principal": "person:alice", "action": {"type": "issue_refund", "target": target}}
+       )
+       with log.run("agent:support-assistant") as run:
+           run.read("policy:refund", "14", digest="hmac-sha256:" + "9f2c41aa" * 8)
+           with run.decision(
+               "issue_refund",
+               target,
+               rule={"ref": "rule:refund-under-100", "version": "3", "result": "allow"},
+               approval={"by": approval["principal"], "entry": entry_hash(approval)},
+           ):
+               pass
+
+
+   def test_refund_entries_match_tenbri_toml(tmp_path, monkeypatch):
+       monkeypatch.setenv("TENBRI_KEYS", str(tmp_path / "keys"))
+       stream = tmp_path / "audit" / "support"
+       with Tenbri.open(stream, create=True) as log:
+           record_refund(log, "ch_3PqX")
+
+       check = subprocess.run(
+           ["tenbri", "schema", "check", "--schema", "tenbri.toml", str(stream)],
+           capture_output=True,
+           text=True,
+       )
+       print(check.stdout)
+       assert check.returncode == 0, check.stdout + check.stderr
+   ```
+
+   ```sh
+   python -m pytest -q test_audit_schema.py
+   ```
+
+   ```text
+   .                                                                        [100%]
+   1 passed in 0.17s
+   ```
+
+   Drop the `approval=` argument and the test fails with the violation:
+
+   ```text
+   E         /private/var/folders/…/test_refund_entries_match_tenb0/audit/support seq 4: approval: required
+   1 failed in 0.14s
+   ```
+
+   </TabItem>
+   <TabItem label="TypeScript">
+
+   Replace `recordRefund` with a call into your own code.
+
+   ```ts title="audit-schema.test.ts"
+   import assert from 'node:assert/strict'
+   import { execFileSync } from 'node:child_process'
+   import { createHash } from 'node:crypto'
+   import { mkdtempSync } from 'node:fs'
+   import { tmpdir } from 'node:os'
+   import { join } from 'node:path'
+   import { test } from 'node:test'
+   import { Tenbri, type Entry } from 'tenbri'
+
+   function canonical(v: unknown): string {
+     if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`
+     if (v !== null && typeof v === 'object') {
+       const keys = Object.keys(v).sort()
+       return `{${keys.map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(',')}}`
+     }
+     return JSON.stringify(v)
+   }
+   const entryHash = (e: Entry) => 'sha256:' + createHash('sha256').update('\0' + canonical(e)).digest('hex')
+
+   // What the agent writes for a refund: replace with a call into your own code.
+   async function recordRefund(log: Tenbri, charge: string): Promise<void> {
+     const target = `stripe:charge/${charge}`
+     const approval = await log.append({ kind: 'approval', principal: 'person:alice', action: { type: 'issue_refund', target } })
+     await log.run({ principal: 'agent:support-assistant' }, async (run) => {
+       run.read('policy:refund', { version: '14', digest: 'hmac-sha256:' + '9f2c41aa'.repeat(8) })
+       await run.decision(
+         {
+           action: 'issue_refund',
+           target,
+           rule: { ref: 'rule:refund-under-100', version: '3', result: 'allow' },
+           approval: { by: approval.principal, entry: entryHash(approval) },
+         },
+         async () => {},
+       )
+     })
+   }
+
+   test('refund entries match tenbri.toml', async () => {
+     const dir = mkdtempSync(join(tmpdir(), 'tenbri-'))
+     process.env.TENBRI_KEYS = join(dir, 'keys')
+     const stream = join(dir, 'audit', 'support')
+     const log = await Tenbri.open(stream, { create: true })
+     await recordRefund(log, 'ch_3PqX')
+     await log.close()
+
+     // execFileSync throws, failing the test, when tenbri exits 1 (an entry breaks its schema) or 2.
+     const out = execFileSync('tenbri', ['schema', 'check', '--schema', 'tenbri.toml', stream], { encoding: 'utf8' })
+     console.log(out)
+     assert.match(out, /0 break their schema/)
+   })
+   ```
+
+   ```sh
+   node --test audit-schema.test.ts
+   ```
+
+   ```text
+   tenbri.toml: 1 action schemas, unknown actions rejected
+   /var/folders/…/tenbri-5hRPij/audit/support: 5 entries, 0 break their schema
+
+   ✔ refund entries match tenbri.toml (147.448833ms)
+   ℹ tests 1
+   ℹ pass 1
+   ℹ fail 0
+   ```
+
+   </TabItem>
+   <TabItem label="REST">
+
+   Run `tenbrid` with the schema in your test environment (step 4): a write that breaks it fails
+   there with status 422, so your client's tests fail too.
+
+   </TabItem>
+   </Tabs>
+
+4. **Enforce the schema at write time.**
+
+   <Tabs syncKey="lang">
+   <TabItem label="CLI">
+
+   `tenbri append` does not apply `tenbri.toml`; check the stream with `tenbri schema check`,
+   or write through `tenbrid` (the REST tab) to refuse bad entries before they are stored.
+
+   </TabItem>
+   <TabItem label="Python">
+
+   The binding writes to storage directly and does not apply `tenbri.toml`. Keep the test from
+   step 3, or write through `tenbrid` (the REST tab) to refuse bad entries before they are stored.
+
+   </TabItem>
+   <TabItem label="TypeScript">
+
+   The binding writes to storage directly and does not apply `tenbri.toml`. Keep the test from
+   step 3, or write through `tenbrid` (the REST tab) to refuse bad entries before they are stored.
+
+   </TabItem>
+   <TabItem label="REST">
+
+   Set `schema` in `tenbrid.toml` (or `TENBRI_SCHEMA`). Make the token with `tenbrid token`.
+
+   ```toml title="tenbrid.toml"
+   keys = "keys"
+   schema = "tenbri.toml"
+
+   [streams.support]
+   path = "audit/support"
+
+   [[tokens]]
+   sha256 = "sha256:…"   # from tenbrid token
+   principal = { kind = "agent", id = "support-assistant" }
+   ```
+
+   ```sh
+   tenbrid --config tenbrid.toml
+   ```
+
+   In another terminal, read the schemas back, then send an intent with no rule and no approval:
+
+   ```sh
+   export TENBRI_URL=http://127.0.0.1:7070
+   export TOKEN=tnbt_…   # the token tenbrid printed
+   curl -s $TENBRI_URL/v1/schemas -H "Authorization: Bearer $TOKEN"
+
+   curl -s -w '\n%{http_code}\n' -X POST $TENBRI_URL/v1/streams/support/intents \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Idempotency-Key: 01K80B2A3B4C5D6E7F8G9H0J1K" \
+     -H "Content-Type: application/json" \
+     -d '{"action":{"type":"issue_refund","target":"stripe:charge/ch_9Zk2"},"inputs":[{"ref":"policy:refund","version":"15","digest":"hmac-sha256:9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa9f2c41aa"}]}'
+   ```
+
+   ```text
+   {"actions":{"issue_refund":{"approval":true,"description":"Refund a card charge through Stripe.","fields":{"rule.result":{"allowed":["allow"]}},"inputs":["policy:refund"],"rule":true,"target":"stripe:charge/*"}},"unknown_actions":"reject"}
+   {"error":{"code":"TENBRI_SCHEMA_VIOLATION","message":"entry 01K80B2A3B4C5D6E7F8G9H0J1K: rule: required; approval: required","violations":[{"path":"rule","message":"required"},{"path":"approval","message":"required"}]}}
+   422
+   ```
+
+   An undeclared action type is refused the same way:
+
+   ```text
+   {"error":{"code":"TENBRI_SCHEMA_VIOLATION","message":"entry 01K80B2B3B4C5D6E7F8G9H0J1K: action.type: `close_ticket` is not declared in tenbri.toml","violations":[{"path":"action.type","message":"`close_ticket` is not declared in tenbri.toml"}]}}
+   422
+   ```
+
+   Nothing is written: the entry never reaches the stream.
+
+   </TabItem>
+   </Tabs>
+
+5. **Run the checks on every pull request.**
+
+   This workflow validates `tenbri.toml`, then runs the test for your language. Add stream paths
+   after `schema check` (a test fixture, or an `s3://` stream with credentials from secrets) to
+   check stored entries too.
+
+   <Tabs syncKey="lang">
+   <TabItem label="CLI">
+
+   ```yaml title=".github/workflows/tenbri-schema.yml"
+   name: tenbri schema
+
+   on:
+     pull_request:
+
+   jobs:
+     schema:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v4
+         - uses: dtolnay/rust-toolchain@stable
+         - name: Install tenbri
+           run: cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+         - name: Check tenbri.toml
+           run: tenbri schema check --schema tenbri.toml
+   ```
+
+   </TabItem>
+   <TabItem label="Python">
+
+   ```yaml title=".github/workflows/tenbri-schema.yml"
+   name: tenbri schema
+
+   on:
+     pull_request:
+
+   jobs:
+     schema:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v4
+         - uses: dtolnay/rust-toolchain@stable
+         - uses: actions/setup-python@v5
+           with:
+             python-version: "3.12"
+         - name: Install tenbri
+           run: |
+             cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+             pip install --pre tenbri pytest
+         - name: Check tenbri.toml
+           run: tenbri schema check --schema tenbri.toml
+         - name: Check the entries the code writes
+           run: python -m pytest -q test_audit_schema.py
+   ```
+
+   </TabItem>
+   <TabItem label="TypeScript">
+
+   ```yaml title=".github/workflows/tenbri-schema.yml"
+   name: tenbri schema
+
+   on:
+     pull_request:
+
+   jobs:
+     schema:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v4
+         - uses: dtolnay/rust-toolchain@stable
+         - uses: actions/setup-node@v4
+           with:
+             node-version: 24
+         - name: Install tenbri
+           run: |
+             cargo install tenbri-cli --version 0.1.0-beta.1 --locked
+             npm ci
+         - name: Check tenbri.toml
+           run: tenbri schema check --schema tenbri.toml
+         - name: Check the entries the code writes
+           run: node --test audit-schema.test.ts
+   ```
+
+   </TabItem>
+   </Tabs>
+
+   <Aside>
+   `--version 0.1.0-beta.1` installs the newest `0.1.0` pre-release; pin an exact version once
+   you depend on its output. The commands in each job were run locally; the workflow files
+   themselves were not run on GitHub.
+   </Aside>
+
+</Steps>
 
 ## What happened
 
 `schema check` loaded the schema, then checked every entry and printed each violation with its
-sequence number and member path. It exits 1 when any entry breaks its schema and 2 when the file
-itself is invalid, so CI fails either way. `tenbrid` applies the same file at write time when you
-set `schema` in its configuration, and refuses a breaking append with `TENBRI_SCHEMA_VIOLATION`.
+sequence number and member path. It exits 1 when an entry breaks its schema and 2 when the file
+itself is invalid, so CI fails either way, and the test in your language catches a missing rule or
+approval before any real entry is written. `tenbrid` applies the same file at write time and
+refuses a breaking append with `TENBRI_SCHEMA_VIOLATION`.
 
-Related: [Schemas reference](/docs/reference/schemas/) · [CLI reference](/docs/reference/cli/) ·
-[Errors](/docs/reference/errors/) · [API reference](/docs/reference/api/)
+## Related
+
+- [Schemas reference](/docs/reference/schemas/)
+- [CLI reference](/docs/reference/cli/)
+- [Errors](/docs/reference/errors/)
+- [API reference](/docs/reference/api/)
+- [Entry format](/docs/reference/entry-format/)
