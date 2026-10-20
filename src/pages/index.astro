@@ -174,11 +174,12 @@ const frameworks = [
 
 // The recorded session: real output from the quickstart run, hashes shortened.
 const session = [
-	{ note: 'refund.py: @tenbri.decision on a refund function, called three times', cmd: 'TENBRI_STREAM=audit/support TENBRI_AGENT=agent:support python refund.py', out: 'pin this: sha256:18c44ddcc1b123d3…f94edc\nok: re_123\nrefused: over the 500 EUR ceiling\nerror: nothing to refund' },
-	{ note: 'every call is an intent and an outcome', cmd: "tenbri tail audit/support -n 6 --no-follow | jq -c '{seq, phase, status, target: .action.target}'", out: '{"seq":3,"phase":"intent","status":null,"target":"stripe:ch_3PqX"}\n{"seq":4,"phase":"outcome","status":"ok","target":"stripe:ch_3PqX"}\n{"seq":5,"phase":"intent","status":null,"target":"stripe:ch_9ZzY"}\n{"seq":6,"phase":"outcome","status":"refused","target":"stripe:ch_9ZzY"}\n{"seq":7,"phase":"intent","status":null,"target":"stripe:ch_0"}\n{"seq":8,"phase":"outcome","status":"error","target":"stripe:ch_0"}' },
-	{ note: 'anyone can verify it, offline, against the pinned key', cmd: 'tenbri verify audit/support --key sha256:18c44ddc…', out: 'verified 8 entries, stream tnb1:18c44ddcc1b123d3…7b00, pinned to sha256:18c44ddc…' },
-	{ note: 'someone rewrites history: one refund now points elsewhere', cmd: "sed -i '' 's/ch_3PqX/ch_3PqZ/' audit/support/batches/000000000003.jsonl" },
-	{ cmd: 'tenbri verify audit/support --key sha256:18c44ddc…', out: 'broken at seq 3: bad_signature: the signature does not verify\n2 entries verified before it, stream tnb1:18c44ddcc1b123d3…7b00' },
+	{ chapter: 'Record', note: 'refund.py decorates a refund function with @tenbri.decision and calls it three times', cmd: 'export TENBRI_STREAM=audit/support TENBRI_AGENT=agent:support' },
+	{ cmd: 'python refund.py', out: 'pin this: sha256:18c44ddc…f94edc\nok: re_123\nrefused: over the 500 EUR ceiling\nerror: nothing to refund' },
+	{ chapter: 'Read', note: 'each call wrote an intent before it ran, then its outcome', cmd: `tenbri tail audit/support -n 6 --no-follow | jq -r '[.seq, .phase, .status // "-", .action.target] | @tsv'`, out: '3   intent    -         stripe:ch_3PqX\n4   outcome   ok        stripe:ch_3PqX\n5   intent    -         stripe:ch_9ZzY\n6   outcome   refused   stripe:ch_9ZzY\n7   intent    -         stripe:ch_0\n8   outcome   error     stripe:ch_0' },
+	{ chapter: 'Verify', note: 'anyone can check it offline, against the pinned key', cmd: 'tenbri verify audit/support --key sha256:18c44ddc…', out: 'verified 8 entries, stream tnb1:18c44ddc…7b00, pinned to sha256:18c44ddc…' },
+	{ chapter: 'Tamper', note: 'someone edits one refund on disk', cmd: "sed -i '' 's/ch_3PqX/ch_3PqZ/' audit/support/batches/000000000003.jsonl" },
+	{ chapter: 'Caught', note: 'the first changed entry fails verification', cmd: 'tenbri verify audit/support --key sha256:18c44ddc…', out: 'broken at seq 3: bad_signature: the signature does not verify\n2 entries verified before it, stream tnb1:18c44ddc…7b00' },
 ];
 
 const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', 'SOC 2', 'ISO/IEC 27001', 'ISO/IEC 42001', 'NIST AI RMF'];
@@ -254,7 +255,7 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 				<h2 id="demo-title">Record, verify, tamper, get caught</h2>
 				<p class="sub">A refund function decorated with <code>@tenbri.decision</code>, called three times. Then someone edits one byte on disk. This is the real output, with hashes shortened.</p>
 			</div>
-			<div class="wrap narrow">
+			<div class="wrap player">
 				<TerminalPlayer title="tenbri quickstart" steps={session} />
 			</div>
 		</section>
@@ -461,7 +462,7 @@ const regs = ['EU AI Act Art. 12, 14, 19, 26', 'GDPR Art. 22', 'DORA', 'NIS2', '
 	.band.alt { background: var(--paper-2); }
 	.section-head { display: grid; gap: 1rem; }
 	.section-head.center { justify-items: center; text-align: center; }
-	.narrow { max-width: 52rem; width: 100%; }
+	.player { max-width: 60rem; width: 100%; }
 	.fw { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem; }
 	.fw a {
 		padding: 0.55rem 0.95rem;

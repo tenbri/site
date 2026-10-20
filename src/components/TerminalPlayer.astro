@@ -1,9 +1,12 @@
 ---
 // A lightweight asciinema-style recording: commands are typed, outputs appear line by line.
-// The full transcript is in the HTML, so the page reads complete without JavaScript.
+// The full transcript is in the HTML (complete without JavaScript), and hidden lines keep their
+// space, so the window never jumps or crops while it plays.
 interface Step {
 	cmd: string;
 	out?: string;
+	/** Starts a chapter: shown in the step bar above the terminal and as a comment line. */
+	chapter?: string;
 	note?: string;
 }
 interface Props {
@@ -11,22 +14,36 @@ interface Props {
 	steps: Step[];
 }
 const { title, steps } = Astro.props;
+const chapters = steps.filter((s) => s.chapter).map((s) => s.chapter!);
+let c = -1;
+const indexed = steps.map((s) => ({ ...s, ci: s.chapter ? ++c : c }));
 const tone = (line: string) =>
 	/^(verified|ok:)/.test(line) ? 'ok' : /^(broken|error:|refused:)/.test(line) ? 'bad' : /^pin this/.test(line) ? 'hl' : '';
 ---
 
 <div class="tp" data-tp>
-	<div class="tp-bar">
-		<span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
-		<span class="tp-title">{title}</span>
-		<button type="button" class="tp-replay" hidden>
-			<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" /></svg>
-			Replay
-		</button>
+	<ol class="tp-chapters" aria-label="Steps">
+		{chapters.map((name, i) => <li data-ci={i}><span>{i + 1}</span>{name}</li>)}
+	</ol>
+	<div class="tp-win">
+		<div class="tp-bar">
+			<span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+			<span class="tp-title">{title}</span>
+			<button type="button" class="tp-replay" hidden>
+				<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" /></svg>
+				Replay
+			</button>
+		</div>
+		<div class="tp-screen" role="img" aria-label={`Recorded terminal session: ${title}`}>
+			{indexed.map((s) => (
+				<div class="tp-step" data-ci={s.ci}>
+					{s.note && <div class="tp-note"># {s.note}</div>}
+					<div class="tp-cmd"><span class="pr">$</span><span class="typed">{s.cmd}</span></div>
+					{s.out && s.out.split('\n').map((l) => <div class:list={['tp-out', tone(l)]}>{l}</div>)}
+				</div>
+			))}
+		</div>
 	</div>
-	<div class="tp-screen" role="img" aria-label={`Recorded terminal session: ${title}`}>{steps.map((s) => (
-		<div class="tp-step">{s.note && <div class="tp-note"># {s.note}</div>}<div class="tp-cmd"><span class="pr">$</span> <span class="typed">{s.cmd}</span></div>{s.out && s.out.split('\n').map((l) => <div class:list={['tp-out', tone(l)]}>{l}</div>)}</div>
-	))}<span class="tp-cursor" aria-hidden="true"></span></div>
 </div>
 
 <script>
@@ -34,59 +51,89 @@ const tone = (line: string) =>
 	const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 	for (const tp of document.querySelectorAll<HTMLElement>('[data-tp]')) {
-		const screen = tp.querySelector<HTMLElement>('.tp-screen')!;
 		const replay = tp.querySelector<HTMLButtonElement>('.tp-replay')!;
-		const steps = [...screen.querySelectorAll<HTMLElement>('.tp-step')];
+		const steps = [...tp.querySelectorAll<HTMLElement>('.tp-step')];
+		const chips = [...tp.querySelectorAll<HTMLElement>('.tp-chapters li')];
+		const typed = steps.map((s) => s.querySelector<HTMLElement>('.typed')!.textContent ?? '');
 		let run = 0;
+
+		const mark = (ci: number) => chips.forEach((c, i) => {
+			c.classList.toggle('done', i < ci);
+			c.classList.toggle('now', i === ci);
+		});
 
 		const play = async () => {
 			const me = ++run;
 			replay.hidden = true;
-			// Hide everything, keep the typed text to retype it.
-			const typed = steps.map((s) => s.querySelector<HTMLElement>('.typed')!.textContent ?? '');
-			for (const s of steps) {
-				s.hidden = true;
-				for (const o of s.querySelectorAll<HTMLElement>('.tp-out')) o.hidden = true;
-			}
+			tp.classList.add('playing');
+			for (const s of steps) s.classList.add('pending');
+			for (const o of tp.querySelectorAll<HTMLElement>('.tp-out, .tp-note')) o.classList.add('pending');
 			for (const [i, s] of steps.entries()) {
 				if (me !== run) return;
-				s.hidden = false;
+				mark(Number(s.dataset.ci));
+				s.classList.remove('pending');
+				s.querySelector('.tp-note')?.classList.remove('pending');
 				const t = s.querySelector<HTMLElement>('.typed')!;
 				t.textContent = '';
+				s.classList.add('typing');
 				for (const ch of typed[i]) {
 					if (me !== run) return;
 					t.textContent += ch;
-					await sleep(ch === ' ' ? 18 : 28);
+					await sleep(ch === ' ' ? 14 : 24);
 				}
-				await sleep(350);
+				s.classList.remove('typing');
+				await sleep(300);
 				for (const o of s.querySelectorAll<HTMLElement>('.tp-out')) {
 					if (me !== run) return;
-					o.hidden = false;
-					screen.scrollTop = screen.scrollHeight;
-					await sleep(110);
+					o.classList.remove('pending');
+					await sleep(90);
 				}
-				screen.scrollTop = screen.scrollHeight;
-				await sleep(900);
+				await sleep(1100);
 			}
+			mark(chips.length);
+			tp.classList.remove('playing');
 			replay.hidden = false;
 		};
 
 		replay.addEventListener('click', play);
-		if (reduce) {
-			replay.hidden = true;
-			continue;
-		}
+		if (reduce) continue;
 		new IntersectionObserver((seen, obs) => {
 			if (seen.some((e) => e.isIntersecting)) {
 				obs.disconnect();
 				play();
 			}
-		}, { threshold: 0.4 }).observe(tp);
+		}, { threshold: 0.35 }).observe(tp);
 	}
 </script>
 
 <style>
-	.tp {
+	.tp { display: grid; gap: 1rem; }
+	.tp-chapters {
+		list-style: none; margin: 0; padding: 0;
+		display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem;
+	}
+	.tp-chapters li {
+		display: inline-flex; align-items: center; gap: 0.5rem;
+		padding: 0.4rem 0.8rem 0.4rem 0.45rem;
+		border: 1px solid var(--rule);
+		border-radius: 999px;
+		font: 600 0.88rem/1 var(--font-body);
+		color: var(--ink-2);
+		transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+	}
+	.tp-chapters span {
+		display: grid; place-items: center;
+		width: 1.4rem; height: 1.4rem;
+		border-radius: 50%;
+		background: var(--paper);
+		font: 600 0.72rem/1 var(--font-mono);
+	}
+	.tp-chapters li.now { color: var(--ink); border-color: var(--stamp); background: color-mix(in srgb, var(--stamp) 14%, transparent); }
+	.tp-chapters li.now span { background: var(--stamp); color: #fff; }
+	.tp-chapters li.done { color: var(--ink); }
+	.tp-chapters li.done span { background: color-mix(in srgb, var(--ok) 25%, transparent); color: var(--ok); }
+
+	.tp-win {
 		border-radius: 0.85rem;
 		background: #0d1117;
 		border: 1px solid #262c36;
@@ -99,7 +146,7 @@ const tone = (line: string) =>
 	.lights i { width: 11px; height: 11px; border-radius: 50%; background: #ff5f57; }
 	.lights i:nth-child(2) { background: #febc2e; }
 	.lights i:nth-child(3) { background: #28c840; }
-	.tp-title { flex: 1; min-width: 0; text-align: center; font: 500 0.78rem/1 var(--font-mono); color: #8b949e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.tp-title { flex: 1; min-width: 0; text-align: center; font: 500 0.78rem/1 var(--font-mono); color: #8b949e; }
 	.tp-replay {
 		display: inline-flex; align-items: center; gap: 0.35rem;
 		font: 500 0.74rem/1 var(--font-mono);
@@ -109,25 +156,34 @@ const tone = (line: string) =>
 		cursor: pointer;
 	}
 	.tp-replay[hidden] { display: none; }
+
 	.tp-screen {
-		margin: 0;
-		height: 26rem;
-		overflow: auto;
-		padding: 1.1rem 1.25rem 1.4rem;
-		font: 0.84rem/1.7 var(--font-mono);
+		padding: 1.2rem 1.4rem 1.5rem;
+		font: 0.9rem/1.65 var(--font-mono);
 		color: #c9d1d9;
-		scroll-behavior: smooth;
 	}
-	.tp-step + .tp-step { margin-top: 0.9rem; }
-	.tp-step[hidden], .tp-out[hidden] { display: none; }
-	.tp-note, .tp-cmd, .tp-out { white-space: pre; }
-	.tp-note { color: #6e7681; }
-	.tp-cmd { color: #e6edf3; }
+	.tp-step + .tp-step { margin-top: 1rem; }
+	.tp-note, .tp-cmd, .tp-out { white-space: pre-wrap; overflow-wrap: anywhere; }
+	.tp-cmd { color: #e6edf3; display: grid; grid-template-columns: 1.4em minmax(0, 1fr); }
+	.tp-out { padding-left: 1.4em; }
+	.tp-note { color: #8b949e; font-style: italic; }
 	.pr { color: #7ee2a8; }
 	.tp-out.ok { color: #7ee2a8; }
 	.tp-out.bad { color: #ff7b72; }
 	.tp-out.hl { color: #ffa657; }
-	.tp-cursor { display: inline-block; width: 0.55em; height: 1.1em; background: #e6edf3; vertical-align: text-bottom; animation: blink 1s steps(1) infinite; }
-	@keyframes blink { 50% { opacity: 0; } }
-	@media (prefers-reduced-motion: reduce) { .tp-cursor { animation: none; } }
+	/* Not yet played: keep the space, hide the text */
+	.pending { visibility: hidden; }
+	.typing .typed::after {
+		content: '';
+		display: inline-block; width: 0.55em; height: 1.05em;
+		margin-left: 1px;
+		background: #e6edf3;
+		vertical-align: text-bottom;
+	}
+	@media (max-width: 600px) {
+		.tp-screen { font-size: 0.78rem; padding: 1rem; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.tp-chapters li { transition: none; }
+	}
 </style>
